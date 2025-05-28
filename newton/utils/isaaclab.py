@@ -28,6 +28,7 @@ def replicate_environment(
     num_envs: int,
     env_spacing: tuple[float],
     up_axis: newton.AxisType = "Z",
+    current_builder: newton.ModelBuilder | None = None,
     **usd_kwargs,
 ) -> tuple[newton.ModelBuilder, dict[str:Any]]:
     """
@@ -45,25 +46,27 @@ def replicate_environment(
     Returns:
         (ModelBuilder, dict): The resulting ModelBuilder containing all replicated environments and a dictionary with USD stage information.
     """
+    if current_builder is not None:
+        builder = current_builder
+    else:
+        builder = newton.ModelBuilder(up_axis=up_axis)
 
-    builder = newton.ModelBuilder(up_axis=up_axis)
+        # first, load everything except the prototype env
+        stage_info = newton.utils.parse_usd(
+            source,
+            builder,
+            ignore_paths=[prototype_path],
+            **usd_kwargs,
+        )
 
-    # first, load everything except the prototype env
-    stage_info = newton.utils.parse_usd(
-        source,
-        builder,
-        ignore_paths=[prototype_path],
-        **usd_kwargs,
-    )
-
-    # up_axis sanity check
-    stage_up_axis = stage_info.get("up_axis")
-    if isinstance(stage_up_axis, str) and stage_up_axis.upper() != up_axis.upper():
-        print(f"WARNING: up_axis '{up_axis}' does not match USD stage up_axis '{stage_up_axis}'")
+        # up_axis sanity check
+        stage_up_axis = stage_info.get("up_axis")
+        if isinstance(stage_up_axis, str) and stage_up_axis.upper() != up_axis.upper():
+            print(f"WARNING: up_axis '{up_axis}' does not match USD stage up_axis '{stage_up_axis}'")
 
     # load just the prototype env
     prototype_builder = newton.ModelBuilder(up_axis=up_axis)
-    newton.utils.parse_usd(
+    stage_info = newton.utils.parse_usd(
         source,
         prototype_builder,
         root_path=prototype_path,

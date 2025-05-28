@@ -293,6 +293,15 @@ class ArticulationView:
 
         self._root_transforms = None
         self._root_velocities = None
+        # set meta info
+        self.joint_names = []
+        self.body_names = []
+        for joint_id in range(joint_begin, joint_end):
+            self.joint_names.append(model.joint_key[joint_id].split("/")[-1])
+        print(f"joint_names: {self.joint_names}")
+        for body_id in links:
+            self.body_names.append(model.body_key[body_id].split("/")[-1])
+        print(f"body_names: {self.body_names}")
 
     @functools.lru_cache(maxsize=None)  # noqa
     def _get_cached_attribute(self, name: str, source: Model | State | Control):
