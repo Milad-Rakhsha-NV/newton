@@ -29,7 +29,6 @@ from typing import Optional, Union
 import numpy as np
 import warp as wp
 import warp.sim.render
-from pxr import Usd, UsdGeom
 
 import newton
 import newton.examples
@@ -249,6 +248,7 @@ class ExampleClothManipulation:
             hy=10,
             hz=40,
         )
+        from pxr import Usd, UsdGeom
 
         # add the T-shirt
         usd_stage = Usd.Stage.Open(newton.examples.get_asset("unisex_shirt.usd"))
@@ -329,7 +329,7 @@ class ExampleClothManipulation:
                 collision_detection_interval=-1,
             )
 
-        if self.stage_path is not None:
+        if self.stage_path is not None and False:
             self.renderer = newton.utils.SimRendererOpenGL(
                 path=self.stage_path, model=self.model, scaling=0.01, show_joints=True, show_particles=False
             )
