@@ -27,6 +27,7 @@ def replicate_environment(
     path_pattern: str,
     num_envs: int,
     env_spacing: tuple[float],
+    current_builder: newton.ModelBuilder | None = None,
     up_axis: newton.AxisType = "Z",
     **usd_kwargs,
 ) -> tuple[newton.ModelBuilder, dict[str:Any]]:
@@ -46,8 +47,11 @@ def replicate_environment(
         (ModelBuilder, dict): The resulting ModelBuilder containing all replicated environments and a dictionary with USD stage information.
     """
 
-    builder = newton.ModelBuilder(up_axis=up_axis)
-
+    if current_builder is not None:
+        builder = current_builder
+    else:
+        builder = newton.ModelBuilder(up_axis=up_axis)
+        
     # first, load everything except the prototype env
     stage_info = newton.utils.parse_usd(
         source,

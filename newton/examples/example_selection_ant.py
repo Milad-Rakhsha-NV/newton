@@ -44,6 +44,18 @@ class Example:
             collapse_fixed_joints=COLLAPSE_FIXED_JOINTS,
             joint_ordering="dfs",
         )
+        
+        builder, stage_info = replicate_environment(
+            newton.examples.get_asset("envs/humanoid_env.usd"),
+            "/World/envs/env_0",
+            "/World/envs/env_{}",
+            num_envs,
+            (5.0, 5.0, 0.0),
+            # USD importer args
+            collapse_fixed_joints=True,
+            joint_ordering="dfs",
+            current_builder=builder,
+        )
 
         up_axis = stage_info.get("up_axis") or newton.Axis.Z
 
@@ -51,7 +63,8 @@ class Example:
         self.model = builder.finalize()
         self.model.ground = False
 
-        self.solver = newton.solvers.MuJoCoSolver(self.model)
+        # self.solver = newton.solvers.MuJoCoSolver(self.model)
+        self.solver = newton.solvers.XPBDSolver(self.model)
 
         self.renderer = None
         if stage_path:
