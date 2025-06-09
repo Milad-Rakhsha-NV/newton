@@ -179,6 +179,10 @@ def _create_stage(usd_context, options):
     fabric_ordering = _create_xform_attrs(usdrt_stage, usd_stage, usd_render, app)
     _render_bodies(usdrt_stage, example.state_0, fabric_ordering)
 
+    cube_prim = usd_stage.GetPrimAtPath("/root/shape_22")
+    visibility_attribute = cube_prim.GetAttribute("visibility")
+    visibility_attribute.Set("invisible")
+
     app.update()
 
     return example, usdrt_stage, usd_render, fabric_ordering, 
