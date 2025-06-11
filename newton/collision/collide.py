@@ -24,6 +24,7 @@ import warp as wp
 
 import newton
 from newton.core import PARTICLE_FLAG_ACTIVE, Model, ModelShapeGeometry, State
+from newton.core.types import SHAPE_FLAG_COLLIDE_PARTICLES
 
 # types of triangle's closest point to a point
 TRI_CONTACT_FEATURE_VERTEX_A = wp.constant(0)
@@ -655,6 +656,7 @@ def create_soft_contacts(
     margin: float,
     soft_contact_max: int,
     shape_count: int,
+    shape_flags: wp.array(dtype=wp.uint32),
     # outputs
     soft_contact_count: wp.array(dtype=int),
     soft_contact_particle: wp.array(dtype=int),
@@ -667,6 +669,8 @@ def create_soft_contacts(
     tid = wp.tid()
     particle_index, shape_index = tid // shape_count, tid % shape_count
     if (particle_flags[particle_index] & PARTICLE_FLAG_ACTIVE) == 0:
+        return
+    if shape_flags[shape_index] & wp.uint32(SHAPE_FLAG_COLLIDE_PARTICLES) == 0:
         return
 
     rigid_index = shape_body[shape_index]
@@ -1629,6 +1633,7 @@ def collide(
                     model.soft_contact_margin,
                     model.soft_contact_max,
                     model.shape_count - 1,
+                    model.shape_flags,
                 ],
                 outputs=[
                     model.soft_contact_count,
@@ -2182,7 +2187,6 @@ def triangle_triangle_collision_detection_kernel(
 
 @wp.struct
 class TriMeshCollisionInfo:
-    vertex_indices: wp.array(dtype=wp.int32)
     # size: 2 x sum(vertex_colliding_triangles_buffer_sizes)
     # every two elements records the vertex index and a triangle index it collides to
     vertex_colliding_triangles: wp.array(dtype=wp.int32)
@@ -2268,6 +2272,7 @@ class TriMeshCollisionDetector:
         triangle_triangle_collision_buffer_pre_alloc=8,
         triangle_triangle_collision_buffer_max_alloc=256,
         edge_edge_parallel_epsilon=1e-5,
+        collision_detection_block_size=16,
     ):
         self.model = model
         self.record_triangle_contacting_vertices = record_triangle_contacting_vertices
@@ -2283,6 +2288,8 @@ class TriMeshCollisionDetector:
         self.triangle_triangle_collision_buffer_max_alloc = triangle_triangle_collision_buffer_max_alloc
 
         self.edge_edge_parallel_epsilon = edge_edge_parallel_epsilon
+
+        self.collision_detection_block_size = collision_detection_block_size
 
         self.lower_bounds_tris = wp.array(shape=(model.tri_count,), dtype=wp.vec3, device=model.device)
         self.upper_bounds_tris = wp.array(shape=(model.tri_count,), dtype=wp.vec3, device=model.device)
@@ -2513,6 +2520,7 @@ class TriMeshCollisionDetector:
                 ],
                 dim=self.model.particle_count,
                 device=self.model.device,
+                block_dim=self.collision_detection_block_size,
             )
         else:
             self.triangle_colliding_vertices_min_dist.fill_(query_radius)
@@ -2535,6 +2543,7 @@ class TriMeshCollisionDetector:
                 ],
                 dim=self.model.particle_count,
                 device=self.model.device,
+                block_dim=self.collision_detection_block_size,
             )
 
     def edge_edge_collision_detection(self, query_radius):
@@ -2558,6 +2567,7 @@ class TriMeshCollisionDetector:
             ],
             dim=self.model.edge_count,
             device=self.model.device,
+            block_dim=self.collision_detection_block_size,
         )
 
     def triangle_triangle_intersection_detection(self):

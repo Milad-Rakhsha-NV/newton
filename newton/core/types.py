@@ -17,14 +17,25 @@
 
 from __future__ import annotations
 
+import sys
 from collections.abc import Sequence
 from enum import IntEnum
 from typing import Any, Literal
 
 import numpy as np
 import warp as wp
-from typing_extensions import override
 from warp.context import Devicelike
+
+if sys.version_info >= (3, 12):
+    from typing import override
+else:
+    try:
+        from typing_extensions import override
+    except ImportError:
+        # Fallback no-op decorator if typing_extensions is not available
+        def override(func):
+            return func
+
 
 # Particle flags
 PARTICLE_FLAG_ACTIVE = wp.constant(wp.uint32(1 << 0))
@@ -33,6 +44,7 @@ PARTICLE_FLAG_ACTIVE = wp.constant(wp.uint32(1 << 0))
 SHAPE_FLAG_VISIBLE = wp.constant(wp.uint32(1 << 0))
 SHAPE_FLAG_COLLIDE_SHAPES = wp.constant(wp.uint32(1 << 1))
 SHAPE_FLAG_COLLIDE_GROUND = wp.constant(wp.uint32(1 << 2))
+SHAPE_FLAG_COLLIDE_PARTICLES = wp.constant(wp.uint32(1 << 3))
 
 # Shape geometry types
 GEO_SPHERE = wp.constant(0)
@@ -351,7 +363,7 @@ class Mesh:
 NOTIFY_FLAG_JOINT_PROPERTIES = wp.constant(1 << 0)  # joint_q, joint_X_p, joint_X_c
 NOTIFY_FLAG_JOINT_AXIS_PROPERTIES = wp.constant(
     1 << 1
-)  # joint_target, joint_target_ke, joint_target_kd, joint_axis_mode, joint_limit_upper, joint_limit_lower, joint_limit_ke, joint_limit_kd
+)  # joint_target, joint_target_ke, joint_target_kd, joint_axis_mode, joint_limit_upper, joint_limit_lower, joint_limit_ke, joint_limit_kd, joint_effort_limit, joint_velocity_limit, joint_friction
 NOTIFY_FLAG_DOF_PROPERTIES = wp.constant(1 << 2)  # joint_qd, joint_f, joint_armature
 NOTIFY_FLAG_BODY_PROPERTIES = wp.constant(1 << 3)  # body_q, body_qd
 NOTIFY_FLAG_BODY_INERTIAL_PROPERTIES = wp.constant(
@@ -384,6 +396,7 @@ __all__ = [
     "NOTIFY_FLAG_BODY_INERTIAL_PROPERTIES",
     "NOTIFY_FLAG_BODY_PROPERTIES",
     "NOTIFY_FLAG_DOF_PROPERTIES",
+    "NOTIFY_FLAG_JOINT_AXIS_PROPERTIES",
     "NOTIFY_FLAG_JOINT_PROPERTIES",
     "NOTIFY_FLAG_SHAPE_PROPERTIES",
     "PARTICLE_FLAG_ACTIVE",
