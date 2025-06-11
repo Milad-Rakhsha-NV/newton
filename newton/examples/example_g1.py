@@ -36,6 +36,7 @@ class Example:
     def __init__(self, stage_path="example_g1.usd", num_envs=8):
         self.num_envs = num_envs
         use_mujoco = True
+        use_xpbd = False
         articulation_builder = newton.ModelBuilder()
         # stage_info = newton.utils.parse_usd(
         #     newton.examples.get_asset("envs/example_g1.usd"),
@@ -80,19 +81,20 @@ class Example:
         # self.model.rigid_contact_max = 1204*128
 
         self.control = self.model.control()
-
-        self.solver = newton.solvers.XPBDSolver(self.model, iterations=20)
         # self.solver = newton.solvers.FeatherstoneSolver(self.model)
         # self.solver = newton.solvers.SemiImplicitSolver(self.model, joint_attach_kd=100, joint_attach_ke= 1000)
-        # self.solver = newton.solvers.MuJoCoSolver(
-        #     self.model,
-        #     use_mujoco=use_mujoco,
-        #     solver="newton",
-        #     integrator="euler",
-        #     iterations=5,
-        #     ls_iterations=5,
-        #     nefc_per_env=1
-        # )
+        if use_xpbd:
+            self.solver = newton.solvers.XPBDSolver(self.model, iterations=20)
+        else:
+            self.solver = newton.solvers.MuJoCoSolver(
+                self.model,
+                use_mujoco=use_mujoco,
+                solver="newton",
+                integrator="euler",
+                iterations=5,
+                ls_iterations=5,
+                nefc_per_env=1
+            )
 
         self.renderer = None
 
