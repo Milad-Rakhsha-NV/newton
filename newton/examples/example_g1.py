@@ -34,56 +34,66 @@ wp.config.enable_backward = False
 class Example:
     def __init__(self, stage_path="example_g1.usd", num_envs=8, use_cuda_graph=True):
         self.num_envs = num_envs
+        self.use_xpbd = False
         self.use_mujoco = True
         articulation_builder = newton.ModelBuilder()
 
-        asset_path = newton.utils.download_asset("g1_description")
-
-        newton.utils.parse_mjcf(
-            str(asset_path / "g1_29dof_with_hand_rev_1_0.xml"),
+        newton.utils.parse_usd(
+            newton.examples.get_asset("g1_minimal_modified.usd"),
             articulation_builder,
-            collapse_fixed_joints=True,
-            up_axis="Z",
+            joint_drive_gains_scaling=1.0,
+            collapse_fixed_joints=False,
             enable_self_collisions=False,
+            # collapse_fixed_joints=True,
         )
-        simplified_meshes = {}
-        try:
-            import tqdm  # noqa: PLC0415
 
-            meshes = tqdm.tqdm(articulation_builder.shape_geo_src, desc="Simplifying meshes")
-        except ImportError:
-            meshes = articulation_builder.shape_geo_src
-        for i, m in enumerate(meshes):
-            if m is None:
-                continue
-            hash_m = hash(m)
-            if hash_m in simplified_meshes:
-                articulation_builder.shape_geo_src[i] = simplified_meshes[hash_m]
-            else:
-                simplified = newton.geometry.utils.remesh_mesh(
-                    m, visualize=False, method="convex_hull", recompute_inertia=False
-                )
-                # simplified = newton.geometry.utils.remesh_mesh(
-                #     simplified, visualize=False, target_reduction=None, target_count=32, recompute_inertia=False
-                # )
-                # simplified = newton.geometry.utils.remesh_mesh(
-                #     simplified, visualize=False, method="convex_hull", recompute_inertia=False
-                # )
-                # simplified = newton.geometry.utils.remesh_mesh(
-                #     simplified, visualize=False, method="convex_hull", alpha=0.01, recompute_inertia=False
-                # )
-                # simplified = newton.geometry.utils.remesh_mesh(
-                #     m, visualize=False, method="ftetwild", edge_length_fac=0.5, optimize=True, recompute_inertia=False
-                # )
-                articulation_builder.shape_geo_src[i] = simplified
-                simplified_meshes[hash_m] = simplified
+        # asset_path = newton.utils.download_asset("g1_description")
+
+        # newton.utils.parse_mjcf(
+        #     str(asset_path / "g1_29dof_with_hand_rev_1_0.xml"),
+        #     articulation_builder,
+        #     collapse_fixed_joints=True,
+        #     up_axis="Z",
+        #     enable_self_collisions=False,
+        # )
+        # simplified_meshes = {}
+        # try:
+        #     import tqdm
+
+        #     meshes = tqdm.tqdm(articulation_builder.shape_geo_src, desc="Simplifying meshes")
+        # except ImportError:
+        #     meshes = articulation_builder.shape_geo_src
+        # for i, m in enumerate(meshes):
+        #     if m is None:
+        #         continue
+        #     hash_m = hash(m)
+        #     if hash_m in simplified_meshes:
+        #         articulation_builder.shape_geo_src[i] = simplified_meshes[hash_m]
+        #     else:
+        #         simplified = newton.geometry.utils.remesh_mesh(
+        #             m, visualize=False, method="convex_hull", recompute_inertia=False
+        #         )
+        #         # simplified = newton.geometry.utils.remesh_mesh(
+        #         #     simplified, visualize=False, target_reduction=None, target_count=32, recompute_inertia=False
+        #         # )
+        #         # simplified = newton.geometry.utils.remesh_mesh(
+        #         #     simplified, visualize=False, method="convex_hull", recompute_inertia=False
+        #         # )
+        #         # simplified = newton.geometry.utils.remesh_mesh(
+        #         #     simplified, visualize=False, method="convex_hull", alpha=0.01, recompute_inertia=False
+        #         # )
+        #         # simplified = newton.geometry.utils.remesh_mesh(
+        #         #     m, visualize=False, method="ftetwild", edge_length_fac=0.5, optimize=True, recompute_inertia=False
+        #         # )
+        #         articulation_builder.shape_geo_src[i] = simplified
+        #         simplified_meshes[hash_m] = simplified
 
         spacing = 3.0
         sqn = int(wp.ceil(wp.sqrt(float(self.num_envs))))
 
         builder = newton.ModelBuilder()
         for i in range(self.num_envs):
-            pos = wp.vec3((i % sqn) * spacing, (i // sqn) * spacing, 2)
+            pos = wp.vec3((i % sqn) * spacing, (i // sqn) * spacing, 1.3)
             builder.add_builder(articulation_builder, xform=wp.transform(pos, wp.quat_identity()))
         builder.add_ground_plane()
 
@@ -100,20 +110,21 @@ class Example:
         self.control = self.model.control()
         # self.solver = newton.solvers.FeatherstoneSolver(self.model)
         # self.solver = newton.solvers.SemiImplicitSolver(self.model, joint_attach_kd=100, joint_attach_ke= 1000)
-        if self.use_mujoco:
+        if self.use_xpbd:
+            self.solver = newton.solvers.XPBDSolver(self.model, iterations=20)
+        else:
             self.solver = newton.solvers.MuJoCoSolver(
                 self.model,
-                use_mujoco=False,
+                use_mujoco=self.use_mujoco,
                 solver="newton",
                 integrator="euler",
                 iterations=5,
-                ls_iterations=5,
+                ls_iterations=25,
                 nefc_per_env=300,
                 ncon_per_env=150,
+                contact_stiffness_time_const=0.02,
+                save_to_mjcf="example_g1_mjwarp.xml",
             )
-        else:
-            self.solver = newton.solvers.XPBDSolver(self.model, iterations=20)
-
         self.renderer = None
 
         if stage_path:
@@ -131,7 +142,7 @@ class Example:
 
         newton.sim.eval_fk(self.model, self.model.joint_q, self.model.joint_qd, self.state_0)
         self.contacts = None
-        if not self.use_mujoco:
+        if self.use_xpbd:
             self.contacts = self.model.collide(self.state_0)
         self.use_cuda_graph = (
             not getattr(self.solver, "use_mujoco", False) and wp.get_device().is_cuda and use_cuda_graph
@@ -143,7 +154,7 @@ class Example:
             self.graph = capture.graph
 
     def simulate(self):
-        if not self.use_mujoco:
+        if self.use_xpbd:
             self.contacts = self.model.collide(self.state_0)
         for _ in range(self.sim_substeps):
             self.state_0.clear_forces()
