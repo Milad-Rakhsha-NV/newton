@@ -69,6 +69,38 @@ def replicate_environment(
         root_path=prototype_path,
         **usd_kwargs,
     )
+    simplified_meshes = {}
+    try:
+        import tqdm  # noqa: PLC0415
+
+        meshes = tqdm.tqdm(prototype_builder.shape_geo_src, desc="Simplifying meshes")
+    except ImportError:
+        meshes = prototype_builder.shape_geo_src
+
+    for i, m in enumerate(meshes):
+        if m is None:
+            continue
+        hash_m = hash(m)
+        if hash_m in simplified_meshes:
+            prototype_builder.shape_geo_src[i] = simplified_meshes[hash_m]
+        else:
+            simplified = newton.geometry.utils.remesh_mesh(
+                m, visualize=False, method="convex_hull", recompute_inertia=False
+            )
+            simplified = newton.geometry.utils.remesh_mesh(
+                simplified, visualize=False, target_reduction=None, target_count=32, recompute_inertia=False
+            )
+            # simplified = newton.geometry.utils.remesh_mesh(
+            #     simplified, visualize=False, method="convex_hull", recompute_inertia=False
+            # )
+            # simplified = newton.geometry.utils.remesh_mesh(
+            #     simplified, visualize=False, method="convex_hull", alpha=0.01, recompute_inertia=False
+            # )
+            # simplified = newton.geometry.utils.remesh_mesh(
+            #     m, visualize=False, method="ftetwild", edge_length_fac=0.5, optimize=True, recompute_inertia=False
+            # )
+            prototype_builder.shape_geo_src[i] = simplified
+            simplified_meshes[hash_m] = simplified
 
     env_offsets = compute_env_offsets(num_envs, env_offset=env_spacing, up_axis=up_axis)
 

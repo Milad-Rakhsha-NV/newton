@@ -1839,8 +1839,8 @@ class MuJoCoSolver(SolverBase):
                 | newton.sim.NOTIFY_FLAG_DOF_PROPERTIES
             )
 
-            if model.shape_materials.mu is not None:
-                flags |= newton.sim.NOTIFY_FLAG_SHAPE_PROPERTIES
+            # if model.shape_materials.mu is not None:
+            #     flags |= newton.sim.NOTIFY_FLAG_SHAPE_PROPERTIES
             self.notify_model_changed(flags)
 
             # TODO find better heuristics to determine nconmax and njmax
