@@ -258,7 +258,7 @@ def find_physx_mjwarp_mapping():
 
 
 class Example:
-    def __init__(self, stage_path=None, headless=False):
+    def __init__(self, stage_path=None, headless=False, parse_usd=True):
         self.device = wp.get_device()
         # Convert Warp device to PyTorch device string
         self.torch_device = "cuda" if self.device.is_cuda else "cpu"
@@ -275,6 +275,16 @@ class Example:
         builder.default_shape_cfg.kf = 1.0e3
         builder.default_shape_cfg.mu = 0.75
 
+        # if False:
+        # 	asset_path = newton.utils.download_asset("g1_description")
+        # 	newton.utils.parse_mjcf(
+        # 		str(asset_path / "g1_29dof_with_hand_rev_1_0.xml"),
+        # 		builder,
+        # 		collapse_fixed_joints=False,
+        # 		up_axis="Z",
+        # 		enable_self_collisions=False,
+        # 	)
+        # else:
         newton.utils.parse_usd(
             newton.examples.get_asset("g1_minimal_modified.usd"),
             builder,
@@ -283,6 +293,7 @@ class Example:
             enable_self_collisions=False,
             joint_ordering="dfs",
         )
+        builder.approximate_meshes("bounding_box")
 
         builder.add_ground_plane()
         builder.gravity = wp.vec3(0.0, 0.0, -9.81)
@@ -315,7 +326,7 @@ class Example:
             save_to_mjcf="g1_policy.xml",
         )
 
-        self.renderer = None
+        self.renderer = None  # if headless else newton.utils.SimRendererOpenGL(self.model, stage_path)
         self.state_temp = self.model.state()
         self.state_0 = self.model.state()
         self.state_1 = self.model.state()
@@ -476,6 +487,7 @@ if __name__ == "__main__":
                 )
 
             example.step()
+            # example.render()
             if show_mujoco_viewer:
                 if not example.solver.use_mujoco:
                     mujoco_warp.get_data_into(mjd, mjm, d)
