@@ -112,3 +112,23 @@ def load_policy_and_setup_tensors(example: Any, policy_path: str, num_dofs: int,
     example.joint_pos_initial = torch.tensor(joint_q[joint_pos_slice], device=device, dtype=torch.float32).unsqueeze(0)
     example.act = torch.zeros(1, num_dofs, device=device, dtype=torch.float32)
     example.rearranged_act = torch.zeros(1, num_dofs, device=device, dtype=torch.float32)
+
+
+def find_physx_mjwarp_mapping():
+    """
+    Finds the mapping between PhysX and MJWarp joint names.
+    Returns a tuple of two lists: (mjc_to_physx, physx_to_mjc).
+    """
+    mjc_to_physx = []
+    physx_to_mjc = []
+    for j in mjwarp_joint_names:
+        if j in physx_joint_names:
+            mjc_to_physx.append(physx_joint_names.index(j))
+
+    for j in physx_joint_names:
+        if j in mjwarp_joint_names:
+            physx_to_mjc.append(mjwarp_joint_names.index(j))
+
+    print("Mapping from MJWarp to physx:", mjc_to_physx)
+    print("Mapping from physx to MJWarp:", physx_to_mjc)
+    return mjc_to_physx, physx_to_mjc

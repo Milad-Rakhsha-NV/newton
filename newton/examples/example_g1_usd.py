@@ -37,25 +37,25 @@ class Example:
     def __init__(self, stage_path="example_g1.usd", num_envs=8, use_cuda_graph=True):
         self.num_envs = num_envs
         self.usd_xpbd = False
-        self.use_mujoco = False
+        self.use_mujoco = True
         articulation_builder = newton.ModelBuilder()
 
         newton.utils.parse_usd(
-            newton.examples.get_asset("g1_minimal.usd"),
+            newton.examples.get_asset("g1_isaac.usd"),
             articulation_builder,
-            joint_drive_gains_scaling=1.0,
+            joint_drive_gains_scaling=0.1,
             collapse_fixed_joints=False,
             enable_self_collisions=False,
             # collapse_fixed_joints=True,
         )
-        articulation_builder.approximate_meshes("bounding_box")
+        # articulation_builder.approximate_meshes("convex_hull")
 
         spacing = 3.0
         sqn = int(wp.ceil(wp.sqrt(float(self.num_envs))))
 
         builder = newton.ModelBuilder()
         for i in range(self.num_envs):
-            pos = wp.vec3((i % sqn) * spacing, (i // sqn) * spacing, 1.0)
+            pos = wp.vec3((i % sqn) * spacing, (i // sqn) * spacing, 0.76)
             builder.add_builder(articulation_builder, xform=wp.transform(pos, wp.quat_identity()))
         builder.add_ground_plane()
         builder.gravity = wp.vec3(0.0, 0.0, -9.81)
@@ -66,6 +66,8 @@ class Example:
         self.sim_substeps = 4
         self.sim_dt = self.frame_dt / self.sim_substeps
         # finalize model
+        for i in range(len(builder.joint_armature)):
+            builder.joint_armature[i] = 0.1
         self.model = builder.finalize()
 
         self.control = self.model.control()
@@ -79,10 +81,10 @@ class Example:
                 use_mujoco=self.use_mujoco,
                 solver="newton",
                 integrator="euler",
-                iterations=20,
-                ls_iterations=20,
-                nefc_per_env=1000,
-                ncon_per_env=1000,
+                # iterations=20,
+                # ls_iterations=20,
+                nefc_per_env=30,
+                # ncon_per_env=1000,
                 contact_stiffness_time_const=0.01,
                 save_to_mjcf="mjwarp.xml",
             )
@@ -115,7 +117,7 @@ class Example:
             self.graph = capture.graph
 
     def simulate(self):
-        if not self.use_mujoco:
+        if self.usd_xpbd:
             self.contacts = self.model.collide(self.state_0)
         for _ in range(self.sim_substeps):
             self.state_0.clear_forces()
@@ -169,7 +171,7 @@ if __name__ == "__main__":
     with wp.ScopedDevice(args.device):
         example = Example(stage_path=args.stage_path, num_envs=args.num_envs, use_cuda_graph=args.use_cuda_graph)
 
-        show_mujoco_viewer = True  # example.use_mujoco
+        show_mujoco_viewer = not example.usd_xpbd  # example.use_mujoco
         if show_mujoco_viewer:
             import mujoco
             import mujoco.viewer
