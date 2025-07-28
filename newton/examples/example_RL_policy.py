@@ -14,15 +14,9 @@
 # limitations under the License.
 
 ###########################################################################
-# Example G1 Robot control via keyboard
+# Example Robot control via keyboard
 #
-# Shows how to control G1 robot pretrained in IL via mjwarp.
-# Added keyboard control functionality:
-#   - UHJK keys control movement direction (U=forward, J=back, H=left, K=right)
-#   - YI keys control rotation (Y=rotate left, I=rotate right)
-#   - Command values range from -1.0 to 1.0
-#   - Spacebar resets movement to zero
-#   - Commands displayed in OpenGL window title and console
+# Shows how to control robot pretrained in IL via mjwarp.
 #
 ###########################################################################
 
@@ -32,15 +26,20 @@ import warp as wp
 import newton
 import newton.examples
 import newton.utils
-from newton.examples.policy_utils import compute_obs, find_physx_mjwarp_mapping, load_policy_and_setup_tensors
+from newton.examples.policy_utils import (
+    RobotKeyboardController,
+    compute_obs,
+    find_physx_mjwarp_mapping,
+    load_policy_and_setup_tensors,
+)
 from newton.examples.robot_configs import G1_23DOF, G1_29DOF, Anymal
-from newton.examples.robot_keyboard_controller import RobotKeyboardController
 
 wp.config.enable_backward = False
 
 
 class Example:
-    def __init__(self, asset, parse_usd=True):
+    def __init__(self, asset, student_policy):
+        self.student_policy = student_policy
         self.device = wp.get_device()
         # Convert Warp device to PyTorch device string
         self.torch_device = "cuda" if self.device.is_cuda else "cpu"
@@ -103,7 +102,7 @@ class Example:
             self.model, use_mujoco=self.use_mujoco, solver="newton", ncon_per_env=30, contact_stiffness_time_const=0.01
         )
 
-        self.renderer = newton.utils.SimRendererOpenGL(self.model, "G1 Robot - Use UHJK/YI Keys to Control")
+        self.renderer = newton.utils.SimRendererOpenGL(self.model, "RL Policy Example")
         self.state_temp = self.model.state()
         self.state_0 = self.model.state()
         self.state_1 = self.model.state()
@@ -155,6 +154,7 @@ class Example:
     def step(self):
         with wp.ScopedTimer("step"):
             obs = compute_obs(
+                self.student_policy,
                 self.act,
                 self.state_0,
                 self.joint_pos_initial,
@@ -164,6 +164,8 @@ class Example:
                 self.command,
             )
             with torch.no_grad():
+                print("obs shape:", obs.shape)
+                print("policy: ", self.policy)
                 self.act = self.policy(obs)
                 self.rearranged_act = torch.index_select(self.act, 1, self.mjc_to_physx_indices)
                 a = self.joint_pos_initial + 0.5 * self.rearranged_act
@@ -196,7 +198,7 @@ if __name__ == "__main__":
     parser.add_argument("--num-frames", type=int, default=100000, help="Total number of frames.")
     parser.add_argument("--robot", type=str, default="g1_29dof", help="Robot type: g1_29dof, g1_23dof, anymal")
     parser.add_argument("--physx", action=argparse.BooleanOptionalAction)
-    parser.add_argument("--mjcf", action=argparse.BooleanOptionalAction)
+    parser.add_argument("--student", action=argparse.BooleanOptionalAction)
 
     args = parser.parse_known_args()[0]
     robots = {"g1_29dof": G1_29DOF, "g1_23dof": G1_23DOF, "anymal": Anymal}
@@ -211,9 +213,12 @@ if __name__ == "__main__":
             policy_path = config.policy_path["physx"]
             mjc_to_physx, physx_to_mjc = find_physx_mjwarp_mapping()
         else:
-            policy_path = config.policy_path["mjw"]
+            if args.student:
+                policy_path = config.policy_path["mjw_student"]
+            else:
+                policy_path = config.policy_path["mjw"]
 
-        example = Example(config.asset_path)
+        example = Example(config.asset_path, args.student)
 
         # Use utility function to load policy and setup tensors
         load_policy_and_setup_tensors(example, policy_path, config.num_dofs, slice(7, None))
