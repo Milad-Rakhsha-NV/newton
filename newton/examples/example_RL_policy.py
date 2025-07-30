@@ -99,7 +99,12 @@ class Example:
 
         self.model = builder.finalize()
         self.solver = newton.solvers.MuJoCoSolver(
-            self.model, use_mujoco=self.use_mujoco, solver="newton", ncon_per_env=30, contact_stiffness_time_const=0.01
+            self.model,
+            use_mujoco=self.use_mujoco,
+            solver="newton",
+            ncon_per_env=30,
+            contact_stiffness_time_const=0.01,
+            save_to_mjcf="assets/robot.xml",
         )
 
         self.renderer = newton.utils.SimRendererOpenGL(self.model, "RL Policy Example")
@@ -164,8 +169,6 @@ class Example:
                 self.command,
             )
             with torch.no_grad():
-                print("obs shape:", obs.shape)
-                print("policy: ", self.policy)
                 self.act = self.policy(obs)
                 self.rearranged_act = torch.index_select(self.act, 1, self.mjc_to_physx_indices)
                 a = self.joint_pos_initial + 0.5 * self.rearranged_act
