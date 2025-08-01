@@ -198,10 +198,10 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument("--device", type=str, default=None, help="Override the default Warp device.")
-    parser.add_argument("--num-frames", type=int, default=100000, help="Total number of frames.")
+    parser.add_argument("--num_frames", type=int, default=100000, help="Total number of frames.")
     parser.add_argument("--robot", type=str, default="g1_29dof", help="Robot type: g1_29dof, g1_23dof, anymal")
     parser.add_argument("--physx", action=argparse.BooleanOptionalAction)
-    parser.add_argument("--student", action=argparse.BooleanOptionalAction)
+    parser.add_argument("--policy_type", type=str, default="teacher", help="Policy type: teacher, student, student_RL")
 
     args = parser.parse_known_args()[0]
     robots = {"g1_29dof": G1_29DOF, "g1_23dof": G1_23DOF, "anymal": Anymal}
@@ -209,19 +209,22 @@ if __name__ == "__main__":
     config = robots[args.robot]()
     mjc_to_physx = list(range(config.num_dofs))
     physx_to_mjc = list(range(config.num_dofs))
-    decimation = 1
+    decimation = 4
 
     with wp.ScopedDevice(args.device):
+        student_policy = args.policy_type in ["student", "student_RL"]
         if args.physx:
             policy_path = config.policy_path["physx"]
             mjc_to_physx, physx_to_mjc = find_physx_mjwarp_mapping()
         else:
-            if args.student:
+            if args.policy_type == "student_RL":
+                policy_path = config.policy_path["mjw_student_RL"]
+            elif args.policy_type == "student":
                 policy_path = config.policy_path["mjw_student"]
-            else:
+            else:  # Default to teacher policy
                 policy_path = config.policy_path["mjw"]
 
-        example = Example(config.asset_path, args.student)
+        example = Example(config.asset_path, student_policy)
 
         # Use utility function to load policy and setup tensors
         load_policy_and_setup_tensors(example, policy_path, config.num_dofs, slice(7, None))

@@ -91,6 +91,7 @@ def compute_obs(
     rearranged_joint_pos_rel = torch.index_select(joint_pos_rel, 1, indices)
     rearranged_joint_vel_rel = torch.index_select(joint_vel_rel, 1, indices)
     if student_policy:
+        print("Using student policy observation format")
         obs = torch.cat([a_vel_b, grav, command, rearranged_joint_pos_rel, rearranged_joint_vel_rel, actions], dim=1)
     else:
         obs = torch.cat(
@@ -231,63 +232,68 @@ class RobotKeyboardController:
         Update the controller state based on keyboard input.
 
         Args:
-                        verbose: If True, print command changes to console
+            verbose: If True, print command changes to console
 
         Returns:
-                        False if user wants to quit, True otherwise
+            False if user wants to quit, True otherwise
         """
-        # Process all pygame events first
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                return False
-            elif event.type == pygame.KEYDOWN:
-                # Check if it's one of our mapped keys
-                if event.key in self.key_mappings:
-                    name, index, direction = self.key_mappings[event.key]
+        # Check if we should continue (set by _update_display)
+        if not self._running:
+            return False
 
-                    if name == "reset":
-                        # Reset all commands to zero
-                        self.command.fill_(0.0)
-                    elif index < self.command_size and index >= 0:
-                        # Update specific command index
-                        old_val = self.command[0, index].item()
-                        new_val = old_val + (self.step_size * direction)
-                        new_val = torch.clamp(torch.tensor(new_val), self.min_val, self.max_val).item()
-                        self.command[0, index] = new_val
-
-        # Also check continuous key states for smooth movement
+        # Process pygame events for reset command only (other events handled in _update_display)
+        reset_pressed = False
         keys = pygame.key.get_pressed()
-        continuous_update = False
 
-        # Process continuous key presses
+        # Check for reset key specifically
+        if keys[pygame.K_SPACE]:
+            reset_pressed = True
+
+        # Reset all commands to zero at start (active control)
+        self.command.fill_(0.0)
+
+        # Handle reset command
+        if reset_pressed:
+            # Commands already reset above, just update display
+            pass
+
+        # Check which keys are currently pressed and set commands accordingly
+        command_changed = False
+
+        # Process currently pressed keys
         for key, (name, index, direction) in self.key_mappings.items():
             if keys[key] and name != "reset":
                 if index < self.command_size and index >= 0:
-                    old_val = self.command[0, index].item()
-                    # Slower increment for continuous movement
-                    new_val = old_val + (self.step_size * direction * 0.5)
-                    new_val = torch.clamp(torch.tensor(new_val), self.min_val, self.max_val).item()
-
-                    if abs(new_val - old_val) > 0.001:
-                        self.command[0, index] = new_val
-                        continuous_update = True
+                    # Use smaller range for lateral movement (left/right)
+                    if index == 1:  # Lateral movement (left/right)
+                        target_val = direction * 0.5  # Use 50% of max range
+                    else:  # Forward/backward and rotation
+                        target_val = direction * 1.0  # Use 80% of max range
+                    target_val = torch.clamp(torch.tensor(target_val), self.min_val, self.max_val).item()
+                    self.command[0, index] = target_val
+                    command_changed = True
 
         # Update display every frame
         self._update_display()
 
         # Print feedback if requested
-        if verbose and continuous_update:
+        if verbose and command_changed:
             cmd_str = ", ".join([f"{self.command[0, i].item():.3f}" for i in range(self.command_size)])
             print(f"Command: [{cmd_str}]")
 
-        return True
+        return self._running
 
     def _update_display(self):
         """Update the pygame window with current command values."""
         if self._control_screen is None:
             return
 
-        # Process pygame events to ensure window responds
+        # Process pygame events to ensure window responds and maintains focus
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                self._running = False
+
+        # Additional event pump to ensure responsiveness
         pygame.event.pump()
 
         # Clear screen with dark blue background
@@ -358,11 +364,13 @@ class RobotKeyboardController:
             # If rendering fails, just clear the screen
             pass
 
-        # Force display update
-        pygame.display.flip()
-
-        # Additional display update to ensure refresh
-        pygame.display.update()
+        # Force display update with multiple methods to ensure visibility
+        try:
+            pygame.display.flip()
+            pygame.display.update()
+        except pygame.error:
+            # If display update fails, continue anyway
+            pass
 
     def get_command(self) -> torch.Tensor:
         """
