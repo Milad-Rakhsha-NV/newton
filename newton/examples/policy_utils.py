@@ -50,7 +50,6 @@ def quat_rotate_inverse(q: torch.Tensor, v: torch.Tensor) -> torch.Tensor:
 
 
 def compute_obs(
-    student_policy: bool,
     actions: torch.Tensor,
     state: State,
     joint_pos_initial: torch.Tensor,
@@ -90,13 +89,7 @@ def compute_obs(
     joint_vel_rel = joint_vel_current
     rearranged_joint_pos_rel = torch.index_select(joint_pos_rel, 1, indices)
     rearranged_joint_vel_rel = torch.index_select(joint_vel_rel, 1, indices)
-    if student_policy:
-        print("Using student policy observation format")
-        obs = torch.cat([a_vel_b, grav, command, rearranged_joint_pos_rel, rearranged_joint_vel_rel, actions], dim=1)
-    else:
-        obs = torch.cat(
-            [vel_b, a_vel_b, grav, command, rearranged_joint_pos_rel, rearranged_joint_vel_rel, actions], dim=1
-        )
+    obs = torch.cat([vel_b, a_vel_b, grav, command, rearranged_joint_pos_rel, rearranged_joint_vel_rel, actions], dim=1)
 
     return obs
 
@@ -136,96 +129,77 @@ def find_physx_mjwarp_mapping():
         if j in mjwarp_joint_names:
             physx_to_mjc.append(mjwarp_joint_names.index(j))
 
-    print("Mapping from MJWarp to physx:", mjc_to_physx)
-    print("Mapping from physx to MJWarp:", physx_to_mjc)
+    # print("Mapping from MJWarp to physx:", mjc_to_physx)
+    # print("Mapping from physx to MJWarp:", physx_to_mjc)
     return mjc_to_physx, physx_to_mjc
 
 
 """
 Robot Keyboard Controller
 
-A reusable keyboard control interface for robot command input using pygame.
-Supports real-time command updates with visual feedback.
+A simple keyboard control interface for robot command input.
 """
 
-from typing import Optional
+from typing import Any
 
-import pygame
 import torch
+
+try:
+    import pygame  # type: ignore
+
+    PYGAME_AVAILABLE = True
+except ImportError:
+    pygame = None  # type: ignore
+    PYGAME_AVAILABLE = False
 
 
 class RobotKeyboardController:
     """
-    A generic keyboard controller for robot movement commands.
-
-    Provides real-time keyboard input handling with visual feedback window.
-    Commands are stored as torch tensors and can be customized for robots.
+    A simple keyboard controller for robot movement commands.
     """
 
     def __init__(
         self,
         command_size: int = 3,
-        step_size: float = 0.01,
         command_limits: tuple[float, float] = (-1.0, 1.0),
-        window_size: tuple[int, int] = (500, 400),
-        window_title: str = "Robot Control - Use WASD Keys",
     ):
         """
         Initialize the keyboard controller.
 
         Args:
-                        command_size: Size of command tensor
-                                        (default 3 for [forward, lateral, rotation])
-                        step_size: Increment/decrement step size for commands
-                        command_limits: Min and max values for commands
-                        window_size: pygame window dimensions
-                        window_title: Window title
+            command_size: Size of command tensor (default 3 for [forward, lateral, rotation])
+            command_limits: Min and max values for commands
         """
+        if not PYGAME_AVAILABLE:
+            raise ImportError("pygame is required for RobotKeyboardController")
+
         self.command_size = command_size
-        self.step_size = step_size
         self.min_val, self.max_val = command_limits
-        self.window_size = window_size
 
-        # Initialize command tensor (always on CPU)
-        self.command = torch.zeros((1, command_size), device="cpu", dtype=torch.float32)
+        # Initialize command tensor
+        self.command = torch.zeros((1, command_size), dtype=torch.float32)
 
-        # Key mappings (can be customized)
+        # Simple key mappings
         self.key_mappings = {
-            pygame.K_w: ("forward", 0, 1),
-            pygame.K_s: ("backward", 0, -1),
-            pygame.K_a: ("left", 1, 1),
-            pygame.K_d: ("right", 1, -1),
-            pygame.K_q: ("rotate_left", 2, 1),
-            pygame.K_e: ("rotate_right", 2, -1),
-            pygame.K_SPACE: ("reset", -1, 0),
+            pygame.K_w: (0, 1.0),  # forward
+            pygame.K_s: (0, -1.0),  # backward
+            pygame.K_a: (1, 0.5),  # left (reduced speed)
+            pygame.K_d: (1, -0.5),  # right (reduced speed)
+            pygame.K_q: (2, 1.0),  # rotate left
+            pygame.K_e: (2, -1.0),  # rotate right
         }
 
-        # Display settings
-        self._control_screen: Optional[pygame.Surface] = None
-        self._font: Optional[pygame.font.Font] = None
-        self._small_font: Optional[pygame.font.Font] = None
         self._running = True
-
-        # Initialize pygame
-        self._init_pygame(window_title)
-
-    def _init_pygame(self, title: str):
-        """Initialize pygame and create the control window."""
         pygame.init()
-        self._control_screen = pygame.display.set_mode(self.window_size)
-        pygame.display.set_caption(title)
+        pygame.font.init()
+
+        # Create window for input and display
+        self._screen = pygame.display.set_mode((400, 300))
+        pygame.display.set_caption("Robot Control")
 
         # Initialize fonts
-        pygame.font.init()
-        self._font = pygame.font.Font(None, 48)
-        self._small_font = pygame.font.Font(None, 28)
-
-        # Ensure window has focus for keyboard input
-        pygame.event.set_grab(False)
-        pygame.key.set_repeat(1, 50)
-
-        # Initial display update
-        self._update_display()
+        self._font = pygame.font.Font(None, 28)
+        self._small_font = pygame.font.Font(None, 24)
 
     def update(self, verbose: bool = False) -> bool:
         """
@@ -237,43 +211,26 @@ class RobotKeyboardController:
         Returns:
             False if user wants to quit, True otherwise
         """
-        # Check if we should continue (set by _update_display)
-        if not self._running:
-            return False
+        # Process events
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                self._running = False
+                return False
 
-        # Process pygame events for reset command only (other events handled in _update_display)
-        reset_pressed = False
-        keys = pygame.key.get_pressed()
-
-        # Check for reset key specifically
-        if keys[pygame.K_SPACE]:
-            reset_pressed = True
-
-        # Reset all commands to zero at start (active control)
+        # Reset commands
         self.command.fill_(0.0)
 
-        # Handle reset command
-        if reset_pressed:
-            # Commands already reset above, just update display
-            pass
-
-        # Check which keys are currently pressed and set commands accordingly
+        # Check pressed keys
+        keys = pygame.key.get_pressed()
         command_changed = False
 
-        # Process currently pressed keys
-        for key, (name, index, direction) in self.key_mappings.items():
-            if keys[key] and name != "reset":
-                if index < self.command_size and index >= 0:
-                    # Use smaller range for lateral movement (left/right)
-                    if index == 1:  # Lateral movement (left/right)
-                        target_val = direction * 0.5  # Use 50% of max range
-                    else:  # Forward/backward and rotation
-                        target_val = direction * 1.0  # Use 80% of max range
-                    target_val = torch.clamp(torch.tensor(target_val), self.min_val, self.max_val).item()
-                    self.command[0, index] = target_val
-                    command_changed = True
+        for key, (index, value) in self.key_mappings.items():
+            if keys[key] and index < self.command_size:
+                clamped_value = max(self.min_val, min(self.max_val, value))
+                self.command[0, index] = clamped_value
+                command_changed = True
 
-        # Update display every frame
+        # Update display
         self._update_display()
 
         # Print feedback if requested
@@ -284,139 +241,46 @@ class RobotKeyboardController:
         return self._running
 
     def _update_display(self):
-        """Update the pygame window with current command values."""
-        if self._control_screen is None:
-            return
+        """Update the pygame window with current command values and instructions."""
+        # Clear screen with dark background
+        self._screen.fill((20, 30, 50))
 
-        # Process pygame events to ensure window responds and maintains focus
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                self._running = False
+        # Display current command values
+        y_pos = 70
 
-        # Additional event pump to ensure responsiveness
-        pygame.event.pump()
+        instructions = [
+            "Controls:",
+            "W/S: Forward/Backward",
+            "A/D: Left/Right",
+            "Q/E: Rotate Left/Right",
+            "Close window to exit",
+        ]
 
-        # Clear screen with dark blue background
-        self._control_screen.fill((20, 30, 50))
+        for instruction in instructions:
+            color = (255, 255, 255) if instruction.endswith(":") else (200, 200, 200)
+            inst_surface = self._small_font.render(instruction, True, color)
+            self._screen.blit(inst_surface, (20, y_pos))
+            y_pos += 25
 
-        # Ensure fonts are initialized
-        if self._font is None or self._small_font is None:
-            try:
-                pygame.font.init()
-                self._font = pygame.font.Font(None, 48)
-                self._small_font = pygame.font.Font(None, 28)
-            except pygame.error:
-                # If font initialization fails, skip rendering text
-                pygame.display.flip()
-                return
-
-        # Get current command values directly from tensor (always on CPU)
-        try:
-            cmd_vals = [self.command[0, i].item() for i in range(self.command_size)]
-        except (IndexError, RuntimeError):
-            # If tensor access fails, use zeros
-            cmd_vals = [0.0] * self.command_size
-
-        # Create title
-        try:
-            if self._font is not None:
-                title_text = self._font.render("Robot Control", True, (255, 255, 255))
-
-                # Render command values with explicit formatting
-                y_pos = 20
-                self._control_screen.blit(title_text, (20, y_pos))
-                y_pos += 60
-
-                # Display command values with labels
-                labels = ["Forward", "Lateral", "Rotation"]
-                for i in range(min(len(cmd_vals), len(labels))):
-                    val = cmd_vals[i]
-                    label = labels[i]
-                    # Color: green if non-zero, gray if zero
-                    color = (100, 255, 100) if abs(val) > 0.01 else (150, 150, 150)
-
-                    # Create text with explicit value formatting
-                    text_str = f"{label}: {val:+.3f}"
-                    cmd_text = self._font.render(text_str, True, color)
-
-                    # Blit to screen
-                    self._control_screen.blit(cmd_text, (20, y_pos))
-                    y_pos += 45
-
-                # Add some instructions at the bottom
-                y_pos += 20
-                instructions = [
-                    "Controls:",
-                    "WASD Keys: Move",
-                    "QE Keys: Rotate",
-                    "Space: Reset",
-                    "Close window to exit",
-                ]
-
-                if self._small_font is not None:
-                    for instruction in instructions:
-                        color = (255, 255, 255) if instruction.endswith(":") else (200, 200, 200)
-                        inst_surface = self._small_font.render(instruction, True, color)
-                        self._control_screen.blit(inst_surface, (20, y_pos))
-                        y_pos += 25
-
-        except (pygame.error, TypeError):
-            # If rendering fails, just clear the screen
-            pass
-
-        # Force display update with multiple methods to ensure visibility
-        try:
-            pygame.display.flip()
-            pygame.display.update()
-        except pygame.error:
-            # If display update fails, continue anyway
-            pass
+        # Update display
+        pygame.display.flip()
 
     def get_command(self) -> torch.Tensor:
-        """
-        Get the current command tensor.
-
-        Returns:
-                        Current command as torch tensor of shape (1, command_size)
-        """
+        """Get the current command tensor."""
         return self.command.clone()
-
-    def set_command(self, command: torch.Tensor):
-        """
-        Set the command tensor directly.
-
-        Args:
-                        command: New command tensor
-        """
-        if command.shape != self.command.shape:
-            raise ValueError(f"Command shape {command.shape} doesn't match expected {self.command.shape}")
-        self.command = command.to("cpu")
-        self._update_display()
 
     def reset_commands(self):
         """Reset all commands to zero."""
         self.command.fill_(0.0)
         self._update_display()
 
-    def configure_key_mapping(self, key_mappings: dict[int, tuple[str, int, int]]):
-        """
-        Configure custom key mappings.
-
-        Args:
-                        key_mappings: dict mapping pygame keys to
-                                        (name, command_index, direction)
-        """
-        self.key_mappings = key_mappings
-
     def cleanup(self):
         """Clean up pygame resources."""
-        if pygame.get_init():
+        if PYGAME_AVAILABLE and pygame is not None and pygame.get_init():
             pygame.quit()
 
     def __enter__(self):
-        """Context manager entry."""
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        """Context manager exit."""
         self.cleanup()

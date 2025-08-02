@@ -20,6 +20,8 @@
 #
 ###########################################################################
 
+import time
+
 import torch
 import warp as wp
 
@@ -38,8 +40,7 @@ wp.config.enable_backward = False
 
 
 class Example:
-    def __init__(self, asset, student_policy):
-        self.student_policy = student_policy
+    def __init__(self, asset):
         self.device = wp.get_device()
         # Convert Warp device to PyTorch device string
         self.torch_device = "cuda" if self.device.is_cuda else "cpu"
@@ -80,7 +81,9 @@ class Example:
         self.sim_time = 0.0
         self.sim_step = 0
         fps = 200
+        self.decimation = 4
         self.frame_dt = 1.0e0 / fps
+        self.cycle_time = 1 / fps * self.decimation
 
         self.sim_substeps = 1
         self.sim_dt = self.frame_dt / self.sim_substeps
@@ -104,7 +107,6 @@ class Example:
             solver="newton",
             ncon_per_env=30,
             contact_stiffness_time_const=0.01,
-            save_to_mjcf="assets/robot.xml",
         )
 
         self.renderer = newton.utils.SimRendererOpenGL(self.model, "RL Policy Example")
@@ -159,7 +161,6 @@ class Example:
     def step(self):
         with wp.ScopedTimer("step"):
             obs = compute_obs(
-                self.student_policy,
                 self.act,
                 self.state_0,
                 self.joint_pos_initial,
@@ -176,7 +177,7 @@ class Example:
                 a_wp = wp.from_torch(a_with_zeros, dtype=wp.float32, requires_grad=False)
                 wp.copy(self.control.joint_target, a_wp)
 
-            for _ in range(decimation):
+            for _ in range(example.decimation):
                 if self.use_cuda_graph:
                     wp.capture_launch(self.graph)
                 else:
@@ -201,7 +202,6 @@ if __name__ == "__main__":
     parser.add_argument("--num_frames", type=int, default=100000, help="Total number of frames.")
     parser.add_argument("--robot", type=str, default="g1_29dof", help="Robot type: g1_29dof, g1_23dof, anymal")
     parser.add_argument("--physx", action=argparse.BooleanOptionalAction)
-    parser.add_argument("--policy_type", type=str, default="teacher", help="Policy type: teacher, student, student_RL")
 
     args = parser.parse_known_args()[0]
     robots = {"g1_29dof": G1_29DOF, "g1_23dof": G1_23DOF, "anymal": Anymal}
@@ -209,32 +209,23 @@ if __name__ == "__main__":
     config = robots[args.robot]()
     mjc_to_physx = list(range(config.num_dofs))
     physx_to_mjc = list(range(config.num_dofs))
-    decimation = 4
 
     with wp.ScopedDevice(args.device):
-        student_policy = args.policy_type in ["student", "student_RL"]
         if args.physx:
             policy_path = config.policy_path["physx"]
             mjc_to_physx, physx_to_mjc = find_physx_mjwarp_mapping()
         else:
-            if args.policy_type == "student_RL":
-                policy_path = config.policy_path["mjw_student_RL"]
-            elif args.policy_type == "student":
-                policy_path = config.policy_path["mjw_student"]
-            else:  # Default to teacher policy
-                policy_path = config.policy_path["mjw"]
+            policy_path = config.policy_path["mjw"]
 
-        example = Example(config.asset_path, student_policy)
+        example = Example(config.asset_path)
 
         # Use utility function to load policy and setup tensors
         load_policy_and_setup_tensors(example, policy_path, config.num_dofs, slice(7, None))
 
         # Initialize keyboard controller
         keyboard_controller = RobotKeyboardController(
-            command_size=3,  # [forward, lateral, rotation]
-            step_size=0.005,
+            command_size=3,
             command_limits=(-1.0, 1.0),
-            window_title="Robot Controller",
         )
 
         show_mujoco_viewer = False
@@ -250,6 +241,7 @@ if __name__ == "__main__":
         running = True
         frame_count = 0
         for _ in range(args.num_frames):
+            start_time = time.monotonic()
             if not running:
                 break
 
@@ -277,6 +269,10 @@ if __name__ == "__main__":
                 if not example.solver.use_mujoco:
                     mujoco_warp.get_data_into(mjd, mjm, d)
                 viewer.sync()
+            elapsed_time = time.monotonic() - start_time
+            sleep_time = example.cycle_time - elapsed_time
+            if sleep_time > 0:
+                time.sleep(sleep_time)
 
             frame_count += 1
 

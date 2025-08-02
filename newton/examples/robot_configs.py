@@ -210,10 +210,8 @@ class G1_23DOF:
 class G1_29DOF:
     num_dofs: ClassVar[int] = 43
     policy_path: ClassVar[dict[str, str]] = {
-        "mjw": "./assets/mjw_g1_29DOF_teacher.pt",
+        "mjw": "./assets/mjw_g1_29DOF.pt",
         "physx": "./assets/physx_g1.pt",
-        "mjw_student": "./assets/mjw_g1_29DOF_student.pt",  # teacher distillation
-        "mjw_student_RL": "./assets/mjw_g1_29DOF_student_RL.pt",  # student learning from RL without teacher
     }
     asset_path: ClassVar[str] = "g1_isaac.usd"
     mjw_joint_names: ClassVar[list[str]] = [
