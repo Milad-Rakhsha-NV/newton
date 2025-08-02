@@ -38,7 +38,8 @@ wp.config.enable_backward = False
 
 
 class Example:
-    def __init__(self, asset, student_policy):
+    def __init__(self, robot_config, student_policy):
+        self.config = robot_config
         self.student_policy = student_policy
         self.device = wp.get_device()
         # Convert Warp device to PyTorch device string
@@ -55,7 +56,7 @@ class Example:
         builder.default_shape_cfg.kd = 5.0e2
         builder.default_shape_cfg.kf = 1.0e3
         builder.default_shape_cfg.mu = 0.75
-
+        self.actions = torch.zeros((robot_config.num_dofs + 6,), device=self.torch_device, dtype=torch.float32)
         if False:
             newton.utils.parse_mjcf(
                 newton.examples.get_asset(asset),
@@ -66,7 +67,7 @@ class Example:
             )
         else:
             newton.utils.parse_usd(
-                newton.examples.get_asset(asset),
+                newton.examples.get_asset(robot_config.asset_path),
                 builder,
                 joint_drive_gains_scaling=1.0,
                 collapse_fixed_joints=False,
@@ -84,18 +85,37 @@ class Example:
 
         self.sim_substeps = 1
         self.sim_dt = self.frame_dt / self.sim_substeps
-
         builder.joint_q[:3] = [0.0, 0.0, 0.76]
         builder.joint_q[3:7] = [0.0, 0.0, 0.7071, 0.7071]
-        builder.joint_q[7:] = config.mjw_joint_pos
+        builder.joint_q[7:36] = config.mjw_joint_pos
 
-        for i in range(len(builder.joint_dof_mode)):
-            builder.joint_dof_mode[i] = newton.JOINT_MODE_TARGET_POSITION
+        print("builder.joint_dof_key", builder.joint_key)
+        self.actuated_joint_indices = []
+        self.actuator_indices = []
 
-        for i in range(len(config.mjw_joint_stiffness)):
-            builder.joint_target_ke[i + 6] = config.mjw_joint_stiffness[i]
-            builder.joint_target_kd[i + 6] = config.mjw_joint_damping[i]
-            builder.joint_armature[i + 6] = config.mjw_joint_armature[i]
+        for joint in builder.joint_key:
+            joint_name = joint.replace("/g1_29dof_with_hand_rev_1_0/joints/", "")
+            if joint_name in robot_config.mjw_joint_names:
+                joint_index = builder.joint_key.index(joint)
+                actuator_index = robot_config.mjw_joint_names.index(joint_name)
+                print(f"Found joint {joint_name} Joint index: {joint_index} Actuator index: {actuator_index}")
+                self.actuated_joint_indices.append(joint_index)
+                self.actuator_indices.append(actuator_index)
+
+        builder.joint_target_ke = [10.0] * 49
+        builder.joint_target_kd = [2.0] * 49
+        builder.joint_armature = [0.1] * 49
+
+        for i in range(len(self.actuated_joint_indices)):
+            builder.joint_target_ke[self.actuated_joint_indices[i] + 5] = config.mjw_joint_stiffness[
+                self.actuator_indices[i]
+            ]
+            builder.joint_target_kd[self.actuated_joint_indices[i] + 5] = config.mjw_joint_damping[
+                self.actuator_indices[i]
+            ]
+            builder.joint_armature[self.actuated_joint_indices[i] + 5] = config.mjw_joint_armature[
+                self.actuator_indices[i]
+            ]
 
         self.model = builder.finalize()
         self.solver = newton.solvers.MuJoCoSolver(
@@ -104,7 +124,7 @@ class Example:
             solver="newton",
             ncon_per_env=30,
             contact_stiffness_time_const=0.01,
-            save_to_mjcf="assets/robot.xml",
+            # save_to_mjcf="assets/robot.xml",
         )
 
         self.renderer = newton.utils.SimRendererOpenGL(self.model, "RL Policy Example")
@@ -114,7 +134,6 @@ class Example:
         self.control = self.model.control()
         self.contacts = self.model.collide(self.state_0)
         newton.sim.eval_fk(self.model, self.state_0.joint_q, self.state_0.joint_qd, self.state_0)
-
         # Pre-compute tensors that don't change during simulation
         self.physx_to_mjc_indices = torch.tensor(
             [physx_to_mjc[i] for i in range(len(physx_to_mjc))], device=self.torch_device
@@ -124,10 +143,16 @@ class Example:
         )
         self.gravity_vec = torch.tensor([0.0, 0.0, -1.0], device=self.torch_device, dtype=torch.float32).unsqueeze(0)
         self.command = torch.zeros((1, 3), device=self.torch_device, dtype=torch.float32)
-
+        # Handle potential None state
+        joint_q = self.state_0.joint_q if self.state_0.joint_q is not None else []
+        self.joint_pos_initial = torch.tensor(
+            joint_q[slice(7, None)], device=self.torch_device, dtype=torch.float32
+        ).unsqueeze(0)
+        self.joint_pos_initial = self.joint_pos_initial.squeeze()[self.actuator_indices]
+        self.act = torch.zeros(1, config.num_dofs, device=self.torch_device, dtype=torch.float32)
         self.use_cuda_graph = self.device.is_cuda and wp.is_mempool_enabled(wp.get_device()) and not self.use_mujoco
         if self.use_cuda_graph:
-            torch_tensor = torch.zeros(config.num_dofs + 6, device=self.torch_device, dtype=torch.float32)
+            torch_tensor = torch.zeros(config.num_totat_dofs + 6, device=self.torch_device, dtype=torch.float32)
             self.control.joint_target = wp.from_torch(torch_tensor, dtype=wp.float32, requires_grad=False)
             with wp.ScopedCapture() as capture:
                 self.simulate()
@@ -158,23 +183,23 @@ class Example:
 
     def step(self):
         with wp.ScopedTimer("step"):
+            indices = torch.tensor(self.actuated_joint_indices, device=self.torch_device, dtype=torch.int64)
             obs = compute_obs(
                 self.student_policy,
                 self.act,
                 self.state_0,
                 self.joint_pos_initial,
                 self.torch_device,
-                self.physx_to_mjc_indices,
+                indices - 1,
                 self.gravity_vec,
                 self.command,
             )
             with torch.no_grad():
                 self.act = self.policy(obs)
-                self.rearranged_act = torch.index_select(self.act, 1, self.mjc_to_physx_indices)
-                a = self.joint_pos_initial + 0.5 * self.rearranged_act
-                a_with_zeros = torch.cat([torch.zeros(6, device=self.torch_device, dtype=torch.float32), a.squeeze(0)])
-                a_wp = wp.from_torch(a_with_zeros, dtype=wp.float32, requires_grad=False)
-                wp.copy(self.control.joint_target, a_wp)
+                a = self.joint_pos_initial + 0.5 * self.act
+                torch_targets = wp.to_torch(self.control.joint_target)
+                torch_targets[indices + 5] = a.squeeze(0)
+                wp.copy(self.control.joint_target, wp.from_torch(torch_targets, dtype=wp.float32, requires_grad=False))
 
             for _ in range(decimation):
                 if self.use_cuda_graph:
@@ -207,8 +232,8 @@ if __name__ == "__main__":
     robots = {"g1_29dof": G1_29DOF, "g1_23dof": G1_23DOF, "anymal": Anymal}
 
     config = robots[args.robot]()
-    mjc_to_physx = list(range(config.num_dofs))
-    physx_to_mjc = list(range(config.num_dofs))
+    mjc_to_physx = list(range(config.num_totat_dofs))
+    physx_to_mjc = list(range(config.num_totat_dofs))
     decimation = 4
 
     with wp.ScopedDevice(args.device):
@@ -224,10 +249,10 @@ if __name__ == "__main__":
             else:  # Default to teacher policy
                 policy_path = config.policy_path["mjw"]
 
-        example = Example(config.asset_path, student_policy)
+        example = Example(config, student_policy)
 
         # Use utility function to load policy and setup tensors
-        load_policy_and_setup_tensors(example, policy_path, config.num_dofs, slice(7, None))
+        load_policy_and_setup_tensors(example, policy_path)
 
         # Initialize keyboard controller
         keyboard_controller = RobotKeyboardController(

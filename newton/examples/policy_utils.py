@@ -76,7 +76,6 @@ def compute_obs(
     # Extract state information with proper handling
     joint_q = state.joint_q if state.joint_q is not None else []
     joint_qd = state.joint_qd if state.joint_qd is not None else []
-
     root_quat_w = torch.tensor(joint_q[3:7], device=device, dtype=torch.float32).unsqueeze(0)
     root_lin_vel_w = torch.tensor(joint_qd[3:6], device=device, dtype=torch.float32).unsqueeze(0)
     root_ang_vel_w = torch.tensor(joint_qd[:3], device=device, dtype=torch.float32).unsqueeze(0)
@@ -86,22 +85,32 @@ def compute_obs(
     vel_b = quat_rotate_inverse(root_quat_w, root_lin_vel_w)
     a_vel_b = quat_rotate_inverse(root_quat_w, root_ang_vel_w)
     grav = quat_rotate_inverse(root_quat_w, gravity_vec)
-    joint_pos_rel = joint_pos_current - joint_pos_initial
-    joint_vel_rel = joint_vel_current
-    rearranged_joint_pos_rel = torch.index_select(joint_pos_rel, 1, indices)
-    rearranged_joint_vel_rel = torch.index_select(joint_vel_rel, 1, indices)
+    joint_pos_rel = joint_pos_current.squeeze()[indices] - joint_pos_initial
+    joint_vel_rel = joint_vel_current.squeeze()[indices]
+
     if student_policy:
         print("Using student policy observation format")
-        obs = torch.cat([a_vel_b, grav, command, rearranged_joint_pos_rel, rearranged_joint_vel_rel, actions], dim=1)
+        obs = torch.cat(
+            [a_vel_b.squeeze(), grav.squeeze(), command.squeeze(), joint_pos_rel, joint_vel_rel, actions.squeeze()],
+            dim=0,
+        )
     else:
         obs = torch.cat(
-            [vel_b, a_vel_b, grav, command, rearranged_joint_pos_rel, rearranged_joint_vel_rel, actions], dim=1
+            [
+                vel_b.squeeze(),
+                a_vel_b.squeeze(),
+                grav.squeeze(),
+                command.squeeze(),
+                joint_pos_rel,
+                joint_vel_rel,
+                actions.squeeze(),
+            ],
+            dim=0,
         )
-
     return obs
 
 
-def load_policy_and_setup_tensors(example: Any, policy_path: str, num_dofs: int, joint_pos_slice: slice):
+def load_policy_and_setup_tensors(example: Any, policy_path: str):
     """Load policy and setup initial tensors for robot control.
 
     Args:
@@ -113,12 +122,6 @@ def load_policy_and_setup_tensors(example: Any, policy_path: str, num_dofs: int,
     device = example.torch_device
     print("[INFO] Loading policy from:", policy_path)
     example.policy = torch.jit.load(policy_path, map_location=device)
-
-    # Handle potential None state
-    joint_q = example.state_0.joint_q if example.state_0.joint_q is not None else []
-    example.joint_pos_initial = torch.tensor(joint_q[joint_pos_slice], device=device, dtype=torch.float32).unsqueeze(0)
-    example.act = torch.zeros(1, num_dofs, device=device, dtype=torch.float32)
-    example.rearranged_act = torch.zeros(1, num_dofs, device=device, dtype=torch.float32)
 
 
 def find_physx_mjwarp_mapping():
