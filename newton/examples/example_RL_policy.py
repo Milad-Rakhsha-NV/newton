@@ -34,7 +34,7 @@ from newton.examples.policy_utils import (
     find_physx_mjwarp_mapping,
     load_policy_and_setup_tensors,
 )
-from newton.examples.robot_configs import G1_23DOF, G1_29DOF, Anymal
+from newton.examples.robot_configs import G1_23DOF, G1_29DOF, Anymal, Go2
 
 wp.config.enable_backward = False
 
@@ -200,11 +200,11 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument("--device", type=str, default=None, help="Override the default Warp device.")
     parser.add_argument("--num_frames", type=int, default=100000, help="Total number of frames.")
-    parser.add_argument("--robot", type=str, default="g1_29dof", help="Robot type: g1_29dof, g1_23dof, anymal")
+    parser.add_argument("--robot", type=str, default="g1_29dof", help="Robot type: g1_29dof, g1_23dof, go2, anymal")
     parser.add_argument("--physx", action=argparse.BooleanOptionalAction)
 
     args = parser.parse_known_args()[0]
-    robots = {"g1_29dof": G1_29DOF, "g1_23dof": G1_23DOF, "anymal": Anymal}
+    robots = {"g1_29dof": G1_29DOF, "g1_23dof": G1_23DOF, "go2": Go2, "anymal": Anymal}
 
     config = robots[args.robot]()
     mjc_to_physx = list(range(config.num_dofs))

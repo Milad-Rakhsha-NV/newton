@@ -3,6 +3,44 @@ from typing import ClassVar
 
 
 @dataclass
+class Go2:
+    num_dofs: ClassVar[int] = 12
+    policy_path: ClassVar[dict[str, str]] = {"mjw": "./assets/mjw_go2.pt", "physx": "./assets/physx_g1.pt"}
+    asset_path: ClassVar[str] = "Go2.usd"
+    mjw_joint_names: ClassVar[list[str]] = [
+        "FL_hip_joint",
+        "FL_thigh_joint",
+        "FL_calf_joint",
+        "FR_hip_joint",
+        "FR_thigh_joint",
+        "FR_calf_joint",
+        "RL_hip_joint",
+        "RL_thigh_joint",
+        "RL_calf_joint",
+        "RR_hip_joint",
+        "RR_thigh_joint",
+        "RR_calf_joint",
+    ]
+    mjw_joint_pos: ClassVar[list[float]] = [
+        0.1000,
+        0.8000,
+        -1.5000,
+        -0.1000,
+        0.8000,
+        -1.5000,
+        0.1000,
+        1.0000,
+        -1.5000,
+        -0.1000,
+        1.0000,
+        -1.5000,
+    ]
+    mjw_joint_stiffness: ClassVar[list[float]] = [50] * num_dofs
+    mjw_joint_damping: ClassVar[list[float]] = [1.0] * num_dofs
+    mjw_joint_armature: ClassVar[list[float]] = [0.1] * num_dofs
+
+
+@dataclass
 class G1_23DOF:
     num_dofs: ClassVar[int] = 37
     policy_path: ClassVar[dict[str, str]] = {"mjw": "./assets/mjw_g1_23DOF.pt", "physx": "./assets/physx_g1.pt"}
