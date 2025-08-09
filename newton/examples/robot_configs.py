@@ -7,6 +7,7 @@ class Go2:
     num_dofs: ClassVar[int] = 12
     policy_path: ClassVar[dict[str, str]] = {"mjw": "./assets/mjw_go2.pt", "physx": "./assets/physx_g1.pt"}
     asset_path: ClassVar[str] = "Go2.usd"
+    action_scale: ClassVar[float] = 0.25
     mjw_joint_names: ClassVar[list[str]] = [
         "FL_hip_joint",
         "FL_thigh_joint",
@@ -35,8 +36,8 @@ class Go2:
         1.0000,
         -1.5000,
     ]
-    mjw_joint_stiffness: ClassVar[list[float]] = [50] * num_dofs
-    mjw_joint_damping: ClassVar[list[float]] = [1.0] * num_dofs
+    mjw_joint_stiffness: ClassVar[list[float]] = [25.0] * num_dofs
+    mjw_joint_damping: ClassVar[list[float]] = [0.5] * num_dofs
     mjw_joint_armature: ClassVar[list[float]] = [0.1] * num_dofs
 
 
@@ -45,7 +46,7 @@ class G1_23DOF:
     num_dofs: ClassVar[int] = 37
     policy_path: ClassVar[dict[str, str]] = {"mjw": "./assets/mjw_g1_23DOF.pt", "physx": "./assets/physx_g1.pt"}
     asset_path: ClassVar[str] = "g1_minimal.usd"
-
+    action_scale: ClassVar[float] = 0.5
     mjw_joint_names: ClassVar[list[str]] = [
         "left_hip_pitch_joint",
         "left_hip_roll_joint",
@@ -252,6 +253,7 @@ class G1_29DOF:
         "physx": "./assets/physx_g1.pt",
     }
     asset_path: ClassVar[str] = "g1_isaac.usd"
+    action_scale: ClassVar[float] = 0.5
     mjw_joint_names: ClassVar[list[str]] = [
         "left_hip_pitch_joint",
         "left_hip_roll_joint",
@@ -440,6 +442,7 @@ class Anymal:
     num_dofs: ClassVar[int] = 12
     policy_path: ClassVar[dict[str, str]] = {"mjw": "./assets/mjw_anymal.pt", "physx": "./assets/physx_anymal.pt"}
     asset_path: ClassVar[str] = "anymal_c.usd"
+    action_scale: ClassVar[float] = 0.5
     mjw_joint_names: ClassVar[list[str]] = [
         "front_left_hip_joint",
         "front_left_knee_joint",

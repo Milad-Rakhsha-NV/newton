@@ -40,12 +40,11 @@ wp.config.enable_backward = False
 
 
 class Example:
-    def __init__(self, asset):
+    def __init__(self, config):
         self.device = wp.get_device()
-        # Convert Warp device to PyTorch device string
         self.torch_device = "cuda" if self.device.is_cuda else "cpu"
         self.use_mujoco = False
-
+        self.config = config
         builder = newton.ModelBuilder(up_axis=newton.Axis.Z)
         builder.default_joint_cfg = newton.ModelBuilder.JointDofConfig(
             armature=0.1,
@@ -57,24 +56,15 @@ class Example:
         builder.default_shape_cfg.kf = 1.0e3
         builder.default_shape_cfg.mu = 0.75
 
-        if False:
-            newton.utils.parse_mjcf(
-                newton.examples.get_asset(asset),
-                builder,
-                collapse_fixed_joints=False,
-                up_axis="Z",
-                enable_self_collisions=False,
-            )
-        else:
-            newton.utils.parse_usd(
-                newton.examples.get_asset(asset),
-                builder,
-                joint_drive_gains_scaling=1.0,
-                collapse_fixed_joints=False,
-                enable_self_collisions=False,
-                joint_ordering="dfs",
-            )
-            builder.approximate_meshes("convex_hull")
+        newton.utils.parse_usd(
+            newton.examples.get_asset(config.asset_path),
+            builder,
+            joint_drive_gains_scaling=1.0,
+            collapse_fixed_joints=False,
+            enable_self_collisions=False,
+            joint_ordering="dfs",
+        )
+        builder.approximate_meshes("convex_hull")
 
         builder.add_ground_plane()
         builder.gravity = wp.vec3(0.0, 0.0, -9.81)
@@ -172,7 +162,7 @@ class Example:
             with torch.no_grad():
                 self.act = self.policy(obs)
                 self.rearranged_act = torch.index_select(self.act, 1, self.mjc_to_physx_indices)
-                a = self.joint_pos_initial + 0.5 * self.rearranged_act
+                a = self.joint_pos_initial + self.config.action_scale * self.rearranged_act
                 a_with_zeros = torch.cat([torch.zeros(6, device=self.torch_device, dtype=torch.float32), a.squeeze(0)])
                 a_wp = wp.from_torch(a_with_zeros, dtype=wp.float32, requires_grad=False)
                 wp.copy(self.control.joint_target, a_wp)
@@ -200,8 +190,10 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument("--device", type=str, default=None, help="Override the default Warp device.")
     parser.add_argument("--num_frames", type=int, default=100000, help="Total number of frames.")
-    parser.add_argument("--robot", type=str, default="g1_29dof", help="Robot type: g1_29dof, g1_23dof, go2, anymal")
-    parser.add_argument("--physx", action=argparse.BooleanOptionalAction)
+    parser.add_argument(
+        "--robot", type=str, default="g1_29dof", help="Robot to use. Choose between g1_29dof, g1_23dof, go2, anymal"
+    )
+    parser.add_argument("--physx", action=argparse.BooleanOptionalAction, help="Run physX policy instead of MJWarp.")
 
     args = parser.parse_known_args()[0]
     robots = {"g1_29dof": G1_29DOF, "g1_23dof": G1_23DOF, "go2": Go2, "anymal": Anymal}
@@ -217,7 +209,7 @@ if __name__ == "__main__":
         else:
             policy_path = config.policy_path["mjw"]
 
-        example = Example(config.asset_path)
+        example = Example(config)
 
         # Use utility function to load policy and setup tensors
         load_policy_and_setup_tensors(example, policy_path, config.num_dofs, slice(7, None))
