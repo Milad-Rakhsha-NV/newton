@@ -1281,9 +1281,11 @@ def parse_usd(
             if body_id == -1:
                 continue
             mass = parse_float(prim, "physics:mass")
+            mass_was_set_to_zero = False
             if mass is not None:
                 builder.body_mass[body_id] = mass
-                builder.body_inv_mass[body_id] = 1.0 / mass
+                builder.body_inv_mass[body_id] = 1.0 / mass if mass > 0.0 else 0.0
+                mass_was_set_to_zero = True
             com = parse_vec(prim, "physics:centerOfMass")
             if com is not None:
                 builder.body_com[body_id] = com
@@ -1301,6 +1303,18 @@ def parse_usd(
             # Assign nonzero inertia if mass is nonzero to make sure the body can be simulated
             I_m = np.array(builder.body_inertia[body_id])
             mass = builder.body_mass[body_id]
+            if mass_was_set_to_zero and I_m.max() > 0.0:
+                # Geometry computed inertia but user set mass=0 → use PhysX fallback
+                fallback_mass = 1.0
+                fallback_inertia = np.eye(3, dtype=np.float32)
+                builder.body_mass[body_id] = fallback_mass
+                builder.body_inv_mass[body_id] = 1.0 / fallback_mass
+                builder.body_inertia[body_id] = wp.mat33(fallback_inertia)
+                builder.body_inv_inertia[body_id] = wp.inverse(wp.mat33(fallback_inertia))
+                if verbose:
+                    print(
+                        f"Body {body_path} has physics:mass=0.0 with computed inertia. Using PhysX fallback: mass=1.0, inertia=(1,1,1)"
+                    )
             if I_m.max() == 0.0:
                 if mass > 0.0:
                     # Heuristic: assume a uniform density sphere with the given mass
