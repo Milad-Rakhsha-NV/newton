@@ -1537,13 +1537,13 @@ def parse_usd(
         paths, rigid_body_descs = ret_dict[UsdPhysics.ObjectType.RigidBody]
         for path, _rigid_body_desc in zip(paths, rigid_body_descs, strict=False):
             prim = stage.GetPrimAtPath(path)
-            if not prim.HasAPI(UsdPhysics.MassAPI):
-                continue
+            # if not prim.HasAPI(UsdPhysics.MassAPI):
+            #     continue
             body_path = str(path)
             body_id = path_body_map.get(body_path, -1)
             if body_id == -1:
                 continue
-            mass = parse_float(prim, "physics:mass")
+            mass = parse_float_with_fallback((prim, physics_scene_prim), "physics:mass", builder.bound_mass)
             mass_was_set_to_zero = False
             if mass is not None:
                 builder.body_mass[body_id] = mass
