@@ -31,7 +31,7 @@ from newton.tests.unittest_utils import add_function_test, get_test_devices
 class TestAnymalReset(unittest.TestCase):
     def setUp(self):
         self.device = wp.get_device()
-        self.num_envs = 1
+        self.num_worlds = 1
         self.headless = True
 
     def _setup_simulation(self, cone_type):
@@ -177,7 +177,7 @@ class TestAnymalReset(unittest.TestCase):
             "collision_pairid",
             "solver_nisland",
             "nefc",
-            "ncon",
+            "nacon",
             "cfrc_int",
             "collision_worldid",
             "epa_face",
