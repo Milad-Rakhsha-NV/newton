@@ -94,7 +94,7 @@ class Example:
         # finalize model
         self.model = scene.finalize()
 
-        self.solver = newton.solvers.SolverMuJoCo(self.model, njmax=50, ncon_per_world=50)
+        self.solver = newton.solvers.SolverMuJoCo(self.model, njmax=50, nconmax=50)
 
         self.viewer = viewer
 
@@ -253,7 +253,7 @@ class Example:
         self.viewer.log_state(self.state_0)
         self.viewer.end_frame()
 
-    def test(self):
+    def test_final(self):
         newton.examples.test_body_state(
             self.model,
             self.state_0,
