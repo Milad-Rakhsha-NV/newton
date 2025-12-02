@@ -1496,13 +1496,13 @@ def parse_usd(
             body_id = path_body_map.get(body_path, -1)
             if body_id == -1:
                 continue
-            mass = parse_float_with_fallback((prim, physics_scene_prim), "physics:mass", builder.bound_mass)
+            mass = usd.get_float(prim, "physics:mass")
             mass_was_set_to_zero = False
             if mass is not None:
                 builder.body_mass[body_id] = mass
                 builder.body_inv_mass[body_id] = 1.0 / mass if mass > 0.0 else 0.0
-                mass_was_set_to_zero = True
-            com = parse_vec(prim, "physics:centerOfMass")
+                mass_was_set_to_zero = mass == 0.0
+            com = usd.get_vector(prim, "physics:centerOfMass")
             if com is not None:
                 builder.body_com[body_id] = com
             i_diag = usd.get_vector(prim, "physics:diagonalInertia", np.zeros(3, dtype=np.float32))
