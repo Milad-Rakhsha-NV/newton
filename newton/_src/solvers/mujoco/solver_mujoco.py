@@ -1844,7 +1844,55 @@ class SolverMuJoCo(SolverBase, CouplingInterface):
                 dtype=wp.bool,
                 default=True,  # MuJoCo default: true
                 namespace="mujoco",
+                usd_attribute_name="mjc:compiler:autolimits",
                 mjcf_value_transformer=parse_bool,
+                usd_value_transformer=parse_bool,
+            )
+        )
+
+        # Preserve the native joint-level clamp separately from Newton's
+        # symmetric joint_effort_limit. MuJoCo applies this range after summing
+        # all actuator contributions to a joint, so actuator forcerange is not
+        # an equivalent carrier.
+        builder.add_custom_attribute(
+            ModelBuilder.CustomAttribute(
+                name="joint_actuator_force_limited",
+                frequency=AttributeFrequency.JOINT_DOF,
+                assignment=AttributeAssignment.MODEL,
+                dtype=wp.int32,
+                default=2,  # 0=false, 1=true, 2=auto
+                namespace="mujoco",
+                mjcf_attribute_name="actuatorfrclimited",
+                mjcf_value_transformer=parse_tristate,
+                usd_attribute_name="*",
+                usd_value_transformer=make_usd_limited_transformer("mjc:actuatorfrclimited", "mjc:actuatorfrcrange"),
+            )
+        )
+        builder.add_custom_attribute(
+            ModelBuilder.CustomAttribute(
+                name="joint_actuator_force_range",
+                frequency=AttributeFrequency.JOINT_DOF,
+                assignment=AttributeAssignment.MODEL,
+                dtype=wp.vec2,
+                default=wp.vec2(0.0, 0.0),
+                namespace="mujoco",
+                mjcf_attribute_name="actuatorfrcrange",
+                usd_attribute_name="*",
+                usd_value_transformer=make_usd_range_transformer("mjc:actuatorfrcrange"),
+            )
+        )
+        builder.add_custom_attribute(
+            ModelBuilder.CustomAttribute(
+                name="joint_actuator_force_has_range",
+                frequency=AttributeFrequency.JOINT_DOF,
+                assignment=AttributeAssignment.MODEL,
+                dtype=wp.bool,
+                default=False,
+                namespace="mujoco",
+                mjcf_attribute_name="actuatorfrcrange",
+                mjcf_value_transformer=parse_presence,
+                usd_attribute_name="*",
+                usd_value_transformer=make_usd_has_range_transformer("mjc:actuatorfrcrange"),
             )
         )
 
@@ -5550,6 +5598,9 @@ class SolverMuJoCo(SolverBase, CouplingInterface):
         joint_stiffness = get_custom_attribute("dof_passive_stiffness")
         joint_damping = model.joint_damping.numpy() if model.joint_damping is not None else None
         joint_actgravcomp = get_custom_attribute("jnt_actgravcomp")
+        joint_actuator_force_limited = get_custom_attribute("joint_actuator_force_limited")
+        joint_actuator_force_range = get_custom_attribute("joint_actuator_force_range")
+        joint_actuator_force_has_range = get_custom_attribute("joint_actuator_force_has_range")
         body_gravcomp = get_custom_attribute("gravcomp")
         body_sleep_policy = get_custom_attribute("sleep_policy")
         joint_springref = get_custom_attribute("dof_springref")
@@ -5561,6 +5612,19 @@ class SolverMuJoCo(SolverBase, CouplingInterface):
             if joint_solref_limit_mode is not None:
                 return int(joint_solref_limit_mode[dof_idx]) == SOLREF_MODE_RAW
             return bool(np.any(joint_solref_limit[dof_idx] != 0.0))
+
+        def set_joint_actuator_force_params(params: dict[str, Any], dof_idx: int) -> None:
+            """Set exact native force limits when present, otherwise use Newton's symmetric limit."""
+            if joint_actuator_force_has_range is not None and bool(joint_actuator_force_has_range[dof_idx]):
+                params["actfrclimited"] = (
+                    int(joint_actuator_force_limited[dof_idx]) if joint_actuator_force_limited is not None else 2
+                )
+                params["actfrcrange"] = joint_actuator_force_range[dof_idx]
+                return
+
+            effort_limit = joint_effort_limit[dof_idx]
+            params["actfrclimited"] = True
+            params["actfrcrange"] = (-effort_limit, effort_limit)
 
         # Read the per-row equality arrays through the None-safe helper. finalize() materializes
         # these as shape-stable empty arrays even with no constraints, but the None-safe path keeps
@@ -6402,6 +6466,8 @@ class SolverMuJoCo(SolverBase, CouplingInterface):
                     ball_params["stiffness"] = float(joint_stiffness[qd_start])
                 if joint_damping is not None:
                     ball_params["damping"] = float(joint_damping[qd_start])
+                if joint_actuator_force_has_range is not None and bool(joint_actuator_force_has_range[qd_start]):
+                    set_joint_actuator_force_params(ball_params, qd_start)
                 body.add_joint(**ball_params)
                 mjc_joint_names.append(name)
                 # For ball joints, all 3 DOFs map to the same MuJoCo joint
@@ -6526,10 +6592,8 @@ class SolverMuJoCo(SolverBase, CouplingInterface):
                         joint_params["solref_friction"] = joint_dof_solref[ai]
                     if joint_dof_solimp is not None:
                         joint_params["solimp_friction"] = joint_dof_solimp[ai]
-                    # Use actfrcrange to clamp total actuator force (P+D sum) on this joint
-                    effort_limit = joint_effort_limit[ai]
-                    joint_params["actfrclimited"] = True
-                    joint_params["actfrcrange"] = (-effort_limit, effort_limit)
+                    # Clamp the total generalized actuator force after transmission.
+                    set_joint_actuator_force_params(joint_params, ai)
 
                     if joint_springref is not None:
                         joint_params["springref"] = joint_springref[ai]
@@ -6638,10 +6702,8 @@ class SolverMuJoCo(SolverBase, CouplingInterface):
                         joint_params["solref_friction"] = joint_dof_solref[ai]
                     if joint_dof_solimp is not None:
                         joint_params["solimp_friction"] = joint_dof_solimp[ai]
-                    # Use actfrcrange to clamp total actuator force (P+D sum) on this joint
-                    effort_limit = joint_effort_limit[ai]
-                    joint_params["actfrclimited"] = True
-                    joint_params["actfrcrange"] = (-effort_limit, effort_limit)
+                    # Clamp the total generalized actuator force after transmission.
+                    set_joint_actuator_force_params(joint_params, ai)
 
                     if joint_springref is not None:
                         joint_params["springref"] = np.rad2deg(joint_springref[ai])
@@ -7900,6 +7962,12 @@ class SolverMuJoCo(SolverBase, CouplingInterface):
         solimplimit = getattr(mujoco_attrs, "solimplimit", None) if mujoco_attrs is not None else None
         joint_dof_limit_margin = getattr(mujoco_attrs, "limit_margin", None) if mujoco_attrs is not None else None
         joint_stiffness = getattr(mujoco_attrs, "dof_passive_stiffness", None) if mujoco_attrs is not None else None
+        joint_actuator_force_range = (
+            getattr(mujoco_attrs, "joint_actuator_force_range", None) if mujoco_attrs is not None else None
+        )
+        joint_actuator_force_has_range = (
+            getattr(mujoco_attrs, "joint_actuator_force_has_range", None) if mujoco_attrs is not None else None
+        )
 
         njnt = self.mjc_jnt_to_newton_dof.shape[1]
         wp.launch(
@@ -7910,6 +7978,8 @@ class SolverMuJoCo(SolverBase, CouplingInterface):
                 self.model.joint_limit_lower,
                 self.model.joint_limit_upper,
                 self.model.joint_effort_limit,
+                joint_actuator_force_range,
+                joint_actuator_force_has_range,
                 solimplimit,
                 joint_stiffness,
                 joint_dof_limit_margin,

@@ -1334,15 +1334,6 @@ class TestMenagerieUSD(TestMenagerieBase):
         "actuator_lengthrange",
     }
 
-    # Per-joint fields the USD parser doesn't populate to match native MJCF, but
-    # which step-response dynamics depend on (joint actuator-force range).
-    # Without them, qfrc_constraint diverges from step 1 onward.
-    # Actuator ctrl/force ranges are not listed: the solver re-attaches them when
-    # rebuilding JOINT_TARGET actuators, so no backfill is needed.
-    usd_joint_backfill_fields: ClassVar[list[str]] = [
-        "jnt_actfrclimited",
-        "jnt_actfrcrange",
-    ]
     # Body-level fields. USD import re-diagonalizes inertia, and for some
     # assets (WonikAllegro) the USD authors body mass/inertia values that
     # don't match the source MJCF at all. Backfilling these in one batch
@@ -1367,9 +1358,7 @@ class TestMenagerieUSD(TestMenagerieBase):
     ]
 
     def _backfill_and_recompute(self):
-        """USD variant: permuted backfill of actuator/joint fields the USD parser
-        doesn't populate to match native MJCF (verified per-field via step-by-step
-        qfrc breakdown — see TestMenagerieUSD docstring)."""
+        """Backfill permuted inertia-derived fields that differ after USD import."""
         newton_mjw = self._newton_solver.mjw_model
         native_mjw = self._native_mjw_model
 
@@ -1388,8 +1377,6 @@ class TestMenagerieUSD(TestMenagerieBase):
                     out[nw] = m[ni]
             getattr(newton_mjw, field).assign(out)
 
-        for field in self.usd_joint_backfill_fields:
-            _backfill_permuted(field, self._jnt_map)
         for field in self.usd_body_backfill_fields:
             _backfill_permuted(field, self._body_map)
         for field in self.usd_dof_backfill_fields:

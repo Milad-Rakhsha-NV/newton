@@ -14,6 +14,7 @@ import tempfile
 import types
 import unittest
 import warnings
+import xml.etree.ElementTree as ET
 from unittest import mock
 from urllib.parse import urlparse
 
@@ -6665,6 +6666,239 @@ class TestImportSampleAssetsParsing(unittest.TestCase):
                         set(model.mujoco.solreflimit_mode.numpy().tolist()),
                         {SOLREF_MODE_FORCE_SPACE, SOLREF_MODE_RAW, SOLREF_MODE_MJCF_DEFAULT},
                     )
+
+    @unittest.skipUnless(USD_AVAILABLE, "Requires usd-core")
+    def test_joint_actuator_force_range_parsing(self):
+        """Preserve a native joint actuator-force range and project its magnitude."""
+        from pxr import Usd
+
+        stage = Usd.Stage.CreateInMemory()
+        stage.GetRootLayer().ImportFromString(
+            """#usda 1.0
+(
+    upAxis = "Z"
+)
+
+def PhysicsScene "physicsScene" (
+    prepend apiSchemas = ["MjcSceneAPI"]
+)
+{
+}
+
+def Xform "Articulation" (
+    prepend apiSchemas = ["PhysicsArticulationRootAPI"]
+)
+{
+    def Xform "Body" (
+        prepend apiSchemas = ["PhysicsRigidBodyAPI"]
+    )
+    {
+        def Sphere "Collision" (
+            prepend apiSchemas = ["PhysicsCollisionAPI"]
+        )
+        {
+            double radius = 0.1
+        }
+    }
+
+    def PhysicsRevoluteJoint "Joint" (
+        prepend apiSchemas = ["MjcJointAPI"]
+    )
+    {
+        rel physics:body1 = </Articulation/Body>
+        token physics:axis = "Y"
+        float physics:lowerLimit = -90
+        float physics:upperLimit = 90
+
+        uniform double mjc:actuatorfrcrange:min = -5
+        uniform double mjc:actuatorfrcrange:max = 9
+    }
+}
+"""
+        )
+
+        generic_builder = newton.ModelBuilder()
+        generic_builder.add_usd(stage, schema_resolvers=[usd.SchemaResolverMjc()])
+        generic_joint = generic_builder.joint_label.index("/Articulation/Joint")
+        generic_dof = generic_builder.joint_qd_start[generic_joint]
+        self.assertEqual(generic_builder.joint_effort_limit[generic_dof], 9.0)
+
+        builder = newton.ModelBuilder()
+        SolverMuJoCo.register_custom_attributes(builder)
+        builder.add_usd(stage, schema_resolvers=[usd.SchemaResolverMjc()])
+
+        joint = builder.joint_label.index("/Articulation/Joint")
+        dof = builder.joint_qd_start[joint]
+        self.assertEqual(builder.joint_effort_limit[dof], 9.0)
+
+        model = builder.finalize(device="cpu")
+        np.testing.assert_array_equal(model.mujoco.joint_actuator_force_has_range.numpy(), [True])
+        np.testing.assert_array_equal(model.mujoco.joint_actuator_force_limited.numpy(), [2])
+        np.testing.assert_allclose(model.mujoco.joint_actuator_force_range.numpy(), [[-5.0, 9.0]])
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            mjcf_path = os.path.join(tmpdir, "model.xml")
+            with self.assertWarnsRegex(UserWarning, "converting 1 joint.*outside articulations"):
+                solver = SolverMuJoCo(model, iterations=1, disable_contacts=True, save_to_mjcf=mjcf_path)
+
+            np.testing.assert_array_equal(solver.mj_model.jnt_actfrclimited, [True])
+            np.testing.assert_allclose(solver.mj_model.jnt_actfrcrange, [[-5.0, 9.0]])
+            np.testing.assert_array_equal(solver.mjw_model.jnt_actfrclimited.numpy(), [True])
+            np.testing.assert_allclose(solver.mjw_model.jnt_actfrcrange.numpy(), [[[-5.0, 9.0]]])
+
+            solver.notify_model_changed(newton.ModelFlags.JOINT_DOF_PROPERTIES)
+            np.testing.assert_allclose(solver.mj_model.jnt_actfrcrange, [[-5.0, 9.0]])
+            np.testing.assert_allclose(solver.mjw_model.jnt_actfrcrange.numpy(), [[[-5.0, 9.0]]])
+
+            exported_joints = [
+                joint for joint in ET.parse(mjcf_path).iter("joint") if "actuatorfrcrange" in joint.attrib
+            ]
+            self.assertEqual(len(exported_joints), 1)
+            self.assertIsNone(exported_joints[0].get("actuatorfrclimited"))
+            np.testing.assert_allclose(
+                [float(value) for value in exported_joints[0].get("actuatorfrcrange").split()],
+                [-5.0, 9.0],
+            )
+
+    @unittest.skipUnless(USD_AVAILABLE, "Requires usd-core")
+    def test_joint_actuator_force_range_respects_autolimits(self):
+        """Resolve native joint actuator-force limits using MuJoCo autolimits semantics."""
+        from pxr import Usd
+
+        stage = Usd.Stage.CreateInMemory()
+        stage.GetRootLayer().ImportFromString(
+            """#usda 1.0
+(
+    upAxis = "Z"
+)
+
+def PhysicsScene "physicsScene" (
+    prepend apiSchemas = ["MjcSceneAPI"]
+)
+{
+    uniform bool mjc:compiler:autolimits = false
+}
+
+def Xform "Articulation" (
+    prepend apiSchemas = ["PhysicsArticulationRootAPI"]
+)
+{
+    def Xform "BodyA" (
+        prepend apiSchemas = ["PhysicsRigidBodyAPI"]
+    )
+    {
+        def Sphere "Collision" (
+            prepend apiSchemas = ["PhysicsCollisionAPI"]
+        )
+        {
+            double radius = 0.1
+        }
+    }
+
+    def Xform "BodyB" (
+        prepend apiSchemas = ["PhysicsRigidBodyAPI"]
+    )
+    {
+        def Sphere "Collision" (
+            prepend apiSchemas = ["PhysicsCollisionAPI"]
+        )
+        {
+            double radius = 0.1
+        }
+    }
+
+    def Xform "BodyC" (
+        prepend apiSchemas = ["PhysicsRigidBodyAPI"]
+    )
+    {
+        def Sphere "Collision" (
+            prepend apiSchemas = ["PhysicsCollisionAPI"]
+        )
+        {
+            double radius = 0.1
+        }
+    }
+
+    def PhysicsRevoluteJoint "ExplicitTrue" (
+        prepend apiSchemas = ["MjcJointAPI"]
+    )
+    {
+        rel physics:body1 = </Articulation/BodyA>
+        token physics:axis = "Y"
+        float physics:lowerLimit = -90
+        float physics:upperLimit = 90
+        uniform token mjc:actuatorfrclimited = "true"
+        uniform double mjc:actuatorfrcrange:min = -3
+        uniform double mjc:actuatorfrcrange:max = 4
+    }
+
+    def PhysicsRevoluteJoint "Auto" (
+        prepend apiSchemas = ["MjcJointAPI"]
+    )
+    {
+        rel physics:body0 = </Articulation/BodyA>
+        rel physics:body1 = </Articulation/BodyB>
+        token physics:axis = "Y"
+        float physics:lowerLimit = -90
+        float physics:upperLimit = 90
+        uniform double mjc:actuatorfrcrange:min = -5
+        uniform double mjc:actuatorfrcrange:max = 6
+    }
+
+    def PhysicsRevoluteJoint "ExplicitFalse" (
+        prepend apiSchemas = ["MjcJointAPI"]
+    )
+    {
+        rel physics:body0 = </Articulation/BodyB>
+        rel physics:body1 = </Articulation/BodyC>
+        token physics:axis = "Y"
+        float physics:lowerLimit = -90
+        float physics:upperLimit = 90
+        uniform token mjc:actuatorfrclimited = "false"
+        uniform double mjc:actuatorfrcrange:min = -7
+        uniform double mjc:actuatorfrcrange:max = 8
+    }
+}
+"""
+        )
+
+        generic_builder = newton.ModelBuilder()
+        generic_builder.add_usd(stage, schema_resolvers=[usd.SchemaResolverMjc()])
+        generic_joint_dofs = {
+            label.rsplit("/", maxsplit=1)[-1]: generic_builder.joint_qd_start[index]
+            for index, label in enumerate(generic_builder.joint_label)
+        }
+        self.assertEqual(generic_builder.joint_effort_limit[generic_joint_dofs["ExplicitTrue"]], 4.0)
+        self.assertEqual(generic_builder.joint_effort_limit[generic_joint_dofs["Auto"]], 1.0e6)
+        self.assertEqual(generic_builder.joint_effort_limit[generic_joint_dofs["ExplicitFalse"]], 1.0e6)
+
+        builder = newton.ModelBuilder()
+        SolverMuJoCo.register_custom_attributes(builder)
+        builder.add_usd(stage, schema_resolvers=[usd.SchemaResolverMjc()])
+
+        joint_dofs = {
+            label.rsplit("/", maxsplit=1)[-1]: builder.joint_qd_start[index]
+            for index, label in enumerate(builder.joint_label)
+        }
+        self.assertEqual(builder.joint_effort_limit[joint_dofs["ExplicitTrue"]], 4.0)
+        self.assertEqual(builder.joint_effort_limit[joint_dofs["Auto"]], 1.0e6)
+        self.assertEqual(builder.joint_effort_limit[joint_dofs["ExplicitFalse"]], 1.0e6)
+
+        model = builder.finalize(device="cpu")
+        ranges = model.mujoco.joint_actuator_force_range.numpy()
+        limited = model.mujoco.joint_actuator_force_limited.numpy()
+        np.testing.assert_allclose(ranges[joint_dofs["ExplicitTrue"]], [-3.0, 4.0])
+        np.testing.assert_allclose(ranges[joint_dofs["Auto"]], [-5.0, 6.0])
+        np.testing.assert_allclose(ranges[joint_dofs["ExplicitFalse"]], [-7.0, 8.0])
+        self.assertEqual(limited[joint_dofs["ExplicitTrue"]], 1)
+        self.assertEqual(limited[joint_dofs["Auto"]], 2)
+        self.assertEqual(limited[joint_dofs["ExplicitFalse"]], 0)
+
+        # MuJoCo rejects an authored range whose limited state remains "auto"
+        # when compiler autolimits is false. Preserving that tri-state lets the
+        # native compiler report the invalid source instead of silently changing it.
+        with self.assertRaisesRegex(ValueError, "joint has `range` but not `limited`"):
+            SolverMuJoCo(model, iterations=1, disable_contacts=True)
 
     @unittest.skipUnless(USD_AVAILABLE, "Requires usd-core")
     def test_jnt_actgravcomp_parsing(self):

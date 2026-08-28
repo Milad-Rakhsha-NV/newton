@@ -2250,6 +2250,8 @@ def update_jnt_properties_kernel(
     joint_limit_lower: wp.array[float],
     joint_limit_upper: wp.array[float],
     joint_effort_limit: wp.array[float],
+    joint_actuator_force_range: wp.array[wp.vec2],
+    joint_actuator_force_has_range: wp.array[bool],
     solimplimit: wp.array[vec5],
     joint_stiffness: wp.array[float],
     limit_margin: wp.array[float],
@@ -2289,9 +2291,13 @@ def update_jnt_properties_kernel(
 
     # Update joint range
     jnt_range[world, mjc_jnt] = wp.vec2(joint_limit_lower[newton_dof], joint_limit_upper[newton_dof])
-    # update joint actuator force range (effort limit)
-    effort_limit = joint_effort_limit[newton_dof]
-    jnt_actfrcrange[world, mjc_jnt] = wp.vec2(-effort_limit, effort_limit)
+    # Preserve an imported native asymmetric range. Newton-authored joints use
+    # the symmetric generic effort limit instead.
+    if joint_actuator_force_has_range and joint_actuator_force_has_range[newton_dof]:
+        jnt_actfrcrange[world, mjc_jnt] = joint_actuator_force_range[newton_dof]
+    else:
+        effort_limit = joint_effort_limit[newton_dof]
+        jnt_actfrcrange[world, mjc_jnt] = wp.vec2(-effort_limit, effort_limit)
 
 
 @wp.kernel

@@ -264,6 +264,7 @@ class _DofParams:
     target_ke: float
     target_kd: float
     effort_limit: float
+    has_native_actuator_force_limit: bool
     actuator_mode: JointTargetMode
     initial_position: float | None
     initial_velocity: float | None
@@ -963,6 +964,43 @@ def parse_usd(
         if ke_source == kd_source == "mjc_default":
             return SOLREF_MODE_MJCF_DEFAULT
         return SOLREF_MODE_FORCE_SPACE
+
+    def _mjc_autolimits_enabled() -> bool:
+        """Return the imported MuJoCo compiler autolimits setting."""
+        attr = builder.custom_attributes.get("mujoco:autolimits")
+        if attr is None:
+            return bool(scene_attributes.get("mjc:compiler:autolimits", True)) if parse_mujoco_options else True
+        values = attr.values
+        if isinstance(values, dict):
+            return bool(values.get(0, attr.default))
+        return bool(attr.default)
+
+    def _resolve_mjc_joint_actuator_force_limit(prim: Usd.Prim, current_limit: float) -> tuple[float, bool]:
+        """Project an enabled native MuJoCo joint force range to a symmetric limit."""
+        if mjc_resolver is None or not _has_api_schema(prim, "MjcJointAPI"):
+            return current_limit, False
+
+        minimum_attr = prim.GetAttribute("mjc:actuatorfrcrange:min")
+        maximum_attr = prim.GetAttribute("mjc:actuatorfrcrange:max")
+        minimum_authored = bool(minimum_attr and minimum_attr.HasAuthoredValue())
+        maximum_authored = bool(maximum_attr and maximum_attr.HasAuthoredValue())
+        if not minimum_authored and not maximum_authored:
+            return current_limit, False
+
+        limited_attr = prim.GetAttribute("mjc:actuatorfrclimited")
+        limited = (
+            str(limited_attr.Get()).strip().lower() if limited_attr and limited_attr.HasAuthoredValue() else "auto"
+        )
+        enabled = limited in ("true", "1") or (limited in ("auto", "2") and _mjc_autolimits_enabled())
+        if not enabled:
+            return current_limit, False
+
+        minimum = float(minimum_attr.Get()) if minimum_authored else 0.0
+        maximum = float(maximum_attr.Get()) if maximum_authored else 0.0
+        native_limit = max(abs(minimum), abs(maximum))
+        if not np.isfinite(current_limit) or native_limit < current_limit:
+            return native_limit, True
+        return current_limit, True
 
     def _get_rigid_body_ancestor_path(prim: Usd.Prim) -> str | None:
         current = prim
@@ -1811,6 +1849,7 @@ def parse_usd(
         target_ke = jd.drive.stiffness if has_drive else 0.0
         target_kd = jd.drive.damping if has_drive else 0.0
         effort_limit = jd.drive.forceLimit if has_drive else np.inf
+        effort_limit, has_native_actuator_force_limit = _resolve_mjc_joint_actuator_force_limit(jp_prim, effort_limit)
         if has_drive:
             actuator_mode = JointTargetMode.from_gains(
                 target_ke, target_kd, force_position_velocity_actuation, has_drive=True
@@ -1856,6 +1895,7 @@ def parse_usd(
             target_ke=target_ke,
             target_kd=target_kd,
             effort_limit=effort_limit,
+            has_native_actuator_force_limit=has_native_actuator_force_limit,
             actuator_mode=actuator_mode,
             initial_position=initial_position,
             initial_velocity=initial_velocity,
@@ -1919,6 +1959,7 @@ def parse_usd(
                 joint_params["target_pos"] = dof.target_pos
                 joint_params["target_ke"] = dof.target_ke
                 joint_params["target_kd"] = dof.target_kd
+            if dof.has_drive or dof.has_native_actuator_force_limit:
                 joint_params["effort_limit"] = dof.effort_limit
             joint_params["actuator_mode"] = dof.actuator_mode
 
@@ -1934,6 +1975,12 @@ def parse_usd(
             _, joint_damping = resolve_joint_damping(joint_prim)
             joint_params["damping"] = joint_damping
             joint_index = builder.add_joint_ball(**joint_params)
+            effort_limit, has_native_actuator_force_limit = _resolve_mjc_joint_actuator_force_limit(
+                joint_prim, builder.default_joint_cfg.effort_limit
+            )
+            if has_native_actuator_force_limit:
+                dof_start = builder.joint_qd_start[joint_index]
+                builder.joint_effort_limit[dof_start : dof_start + 3] = [effort_limit] * 3
         elif key == UsdPhysics.ObjectType.D6Joint:
             joint_armature = R.get_value(
                 joint_prim, prim_type=PrimType.JOINT, key="armature", default=default_joint_armature, verbose=verbose
@@ -2007,6 +2054,7 @@ def parse_usd(
                 target_pos, target_vel, target_ke, target_kd, effort_limit, actuator_mode = define_joint_targets(
                     dof, joint_desc
                 )
+                effort_limit, _ = _resolve_mjc_joint_actuator_force_limit(joint_prim, effort_limit)
 
                 _trans_axes = {
                     UsdPhysics.JointDOF.TransX: (1.0, 0.0, 0.0),
