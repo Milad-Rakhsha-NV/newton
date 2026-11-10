@@ -118,8 +118,11 @@ Configuration is intentionally runtime-only in this first experimental slice;
 no USD schema or importer behavior is introduced. Authored material schemas
 require separate ownership and importer validation.
 
-Modifying Python configuration scalars after CUDA graph capture requires
-recapturing the graph. Updating the existing array contents does not.
+Material configuration scalars initialize the authoritative GPU ``material``
+table described below. Update that table to change a material during execution.
+Other Python inputs captured as kernel arguments, such as ``surface_velocity``,
+require graph recapture after modification. Updating existing array contents
+does not require recapture.
 
 Limitations include bed compaction and history, concave-body plugging, coupled
 intruders, moving free-surface evolution, cohesion, wet soils, grain-scale
