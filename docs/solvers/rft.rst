@@ -136,9 +136,6 @@ From the repository root:
     uv run python -m unittest newton.tests.rft.test_rft
     uv run python -m scripts.benchmarks.benchmark_rft --device cpu
     uv run python -m scripts.benchmarks.benchmark_rft --device cuda:0
-    uv run python -m scripts.benchmarks.benchmark_rft_mpm \
-        --dx 0.01 --dt 0.001 --mode vertical \
-        --output newton/tests/outputs/rft/mpm-vertical.json
 
 The first benchmark writes analytic plate sweeps, orientation and friction
 bounds, similarity scaling, drilling mesh convergence, a regularized-penetration
@@ -147,13 +144,11 @@ throughput. The wheel probe and self-convergence study are not independent
 physical references. Throughput is force evaluation only, excludes setup and
 compilation, and reports whether CUDA graphs were used.
 
-The MPM investigation compares the same prescribed closed plate trajectory
-against a resolved finite-bed continuum calculation. Sweep grid size,
-timestep, and ``--iterations`` to establish reference resolution. Calibrate
-strength only on a designated training case and assess held-out orientations
-separately. Report nonconverged references and failed physical comparisons
-alongside passing implementation checks. No experimental acceptance criterion
-is implied by a passing analytic benchmark.
+The companion Isaac Lab branch ``milad/go2-rft-mpm`` provides a direct Go2
+training task, all-link collision-surface binding, and frozen-policy MPM
+inference. Those finite-bed comparisons require reference convergence and
+material calibration. Passing analytic checks or producing a policy rollout
+does not establish physical sand accuracy.
 
 Per-world materials and experimental bearing
 --------------------------------------------
