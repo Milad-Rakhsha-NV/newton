@@ -60,6 +60,10 @@ class SolverRFT(SolverBase):
         surface_height: Plane coordinate along upward gravity direction [m], as a
             scalar or one value per gravity entry/world. World translations along
             the upward direction require corresponding plane heights.
+        surface_bottom: Optional lower plane coordinate [m], scalar or per world.
+            None keeps an unbounded half-space. A bottom at or above the surface
+            produces an empty layer. A rigid substrate must be configured separately;
+            this clipping does not model confinement or change the RFT fit.
 
     Note:
         Use :meth:`evaluate` to obtain loads on prescribed trajectories without
@@ -109,6 +113,7 @@ class SolverRFT(SolverBase):
         rigid_solver: SolverBase | None = None,
         max_edge_length: float | None = None,
         surface_height: float | Sequence[float] = 0.0,
+        surface_bottom: float | Sequence[float] | None = None,
         surface_shape_ids: Sequence[int] | None = None,
     ):
         super().__init__(model)
@@ -146,9 +151,15 @@ class SolverRFT(SolverBase):
             height = np.full(len(gravity), float(height))
         if height.shape != (len(gravity),) or not np.isfinite(height).all():
             raise ValueError("surface_height must be finite and scalar or one value per gravity entry")
+        bottom = np.full(len(gravity), -np.inf) if surface_bottom is None else np.asarray(surface_bottom, dtype=float)
+        if bottom.ndim == 0:
+            bottom = np.full(len(gravity), float(bottom))
+        if bottom.shape != height.shape or (surface_bottom is not None and not np.isfinite(bottom).all()):
+            raise ValueError("surface_bottom must be None, finite scalar, or one finite value per gravity entry")
         triangles = []
         bodies = []
         triangle_shapes = []
+        triangle_cache = {}
         if surface_shape_ids is not None and len(surface_shape_ids) != len(surfaces):
             raise ValueError("surface_shape_ids must match surfaces")
         shape_bodies = model.shape_body.numpy() if surface_shape_ids is not None else None
@@ -160,30 +171,41 @@ class SolverRFT(SolverBase):
                 raise ValueError("Every surface must belong to a valid rigid body")
             if not isinstance(mesh, Mesh):
                 raise TypeError("Every surface geometry must be a newton.Mesh")
-            vertices = np.asarray(mesh.vertices, dtype=np.float64)
-            indices = np.asarray(mesh.indices)
-            if vertices.ndim != 2 or vertices.shape[1] != 3 or not np.isfinite(vertices).all():
-                raise ValueError("Mesh vertices must have shape (N, 3) and be finite")
-            if indices.size % 3 or not np.issubdtype(indices.dtype, np.integer):
-                raise ValueError("Mesh indices must contain integer triangle triplets")
-            if np.any(indices < 0) or np.any(indices >= len(vertices)):
-                raise ValueError("Mesh indices are out of bounds")
-            pending = list(vertices[indices.reshape(-1, 3)])
-            while pending:
-                triangle = pending.pop()
-                if np.linalg.norm(np.cross(triangle[1] - triangle[0], triangle[2] - triangle[0])) == 0.0:
-                    continue
-                edges = triangle - np.roll(triangle, 1, axis=0)
-                if max_edge_length is not None and np.max(np.linalg.norm(edges, axis=1)) > max_edge_length:
-                    a, b, c = triangle
-                    ab, bc, ca = (a + b) / 2, (b + c) / 2, (c + a) / 2
-                    pending.extend(
-                        (np.array([a, ab, ca]), np.array([ab, b, bc]), np.array([ca, bc, c]), np.array([ab, bc, ca]))
-                    )
-                else:
-                    triangles.append(triangle)
-                    bodies.append(body)
-                    triangle_shapes.append(shape)
+            key = id(mesh)
+            if key not in triangle_cache:
+                vertices = np.asarray(mesh.vertices, dtype=np.float64)
+                indices = np.asarray(mesh.indices)
+                if vertices.ndim != 2 or vertices.shape[1] != 3 or not np.isfinite(vertices).all():
+                    raise ValueError("Mesh vertices must have shape (N, 3) and be finite")
+                if indices.size % 3 or not np.issubdtype(indices.dtype, np.integer):
+                    raise ValueError("Mesh indices must contain integer triangle triplets")
+                if np.any(indices < 0) or np.any(indices >= len(vertices)):
+                    raise ValueError("Mesh indices are out of bounds")
+                pending = list(vertices[indices.reshape(-1, 3)])
+                prepared = []
+                while pending:
+                    triangle = pending.pop()
+                    if np.linalg.norm(np.cross(triangle[1] - triangle[0], triangle[2] - triangle[0])) == 0.0:
+                        continue
+                    edges = triangle - np.roll(triangle, 1, axis=0)
+                    if max_edge_length is not None and np.max(np.linalg.norm(edges, axis=1)) > max_edge_length:
+                        a, b, c = triangle
+                        ab, bc, ca = (a + b) / 2, (b + c) / 2, (c + a) / 2
+                        pending.extend(
+                            (
+                                np.array([a, ab, ca]),
+                                np.array([ab, b, bc]),
+                                np.array([ca, bc, c]),
+                                np.array([ab, bc, ca]),
+                            )
+                        )
+                    else:
+                        prepared.append(triangle)
+                triangle_cache[key] = prepared
+            prepared = triangle_cache[key]
+            triangles.extend(prepared)
+            bodies.extend([body] * len(prepared))
+            triangle_shapes.extend([shape] * len(prepared))
         if not triangles:
             raise ValueError("At least one nondegenerate surface triangle is required")
         with wp.ScopedDevice(model.device):
@@ -219,6 +241,8 @@ class SolverRFT(SolverBase):
             """Body-local triangle vertices [m], shape [triangle_count, 3]."""
             self.surface_height = wp.array(height, dtype=float)
             """Plane coordinates along the upward gravity direction [m], per world."""
+            self.surface_bottom = wp.array(bottom, dtype=float)
+            """Lower plane coordinates [m], per world; -inf denotes no lower boundary."""
             self.surface_lowering = wp.zeros(len(triangles), dtype=float)
             """Externally prescribed effective surface lowering [m], per triangle.
 
@@ -267,6 +291,7 @@ class SolverRFT(SolverBase):
                 self.model.body_world,
                 self.model.gravity,
                 self.surface_height,
+                self.surface_bottom,
                 self.surface_lowering,
                 wp.vec3(cfg.surface_velocity),
                 self.material,

@@ -1,0 +1,1 @@
+Added an optional per-world lower clipping plane to experimental granular RFT. Empty layers produce zero granular load; a separately configured rigid substrate supplies rigid contact. This does not model confinement or calibrate finite-layer tractions.

@@ -106,6 +106,41 @@ def test_dynamic_and_surface_lowering(test, device):
     test.assertAlmostEqual(float(solver.evaluate(state).numpy()[0, 2] / force), 0.6, delta=2e-6)
 
 
+def test_finite_layer(test, device):
+    """Integrate a triangle crossing both planes and reject material below the substrate."""
+    model = _model(device)
+    state = model.state()
+    width, depth = 0.2, 0.1
+    mesh = newton.Mesh(
+        np.array([[-width / 2, 0, -2 * depth], [width / 2, 0, -2 * depth], [0, 0, depth]]),
+        [0, 1, 2],
+        compute_inertia=False,
+    )
+    solver = SolverRFT(model, [(0, mesh)], surface_bottom=-depth, config=SolverRFT.Config(strength=1e5))
+    _pose(state, position=(0, 0, 0), velocity=(0, -0.1, 0))
+    # Width at z is W*(h-z)/(3*h). Integrating depth times width gives 5*W*h²/18,
+    # with pressure centroid z=-7*h/10. SI Table S3 supplies the traction direction.
+    force = 1e5 * 5 * width * depth**2 / 18 * np.array([0, 0.22945, 0.08870])
+    expected = np.r_[force, np.cross([0, 0, -0.7 * depth], force)]
+    np.testing.assert_allclose(solver.evaluate(state).numpy()[0], expected, rtol=4e-6, atol=3e-6)
+    graph = None
+    if wp.get_device(device).is_cuda:
+        with wp.ScopedCapture(device=device) as capture:
+            solver.evaluate(state)
+        graph = capture.graph
+    solver.surface_bottom.fill_(0.0)
+    if graph is not None:
+        wp.capture_launch(graph)
+        np.testing.assert_array_equal(solver.body_f.numpy(), 0)
+    test.assertEqual(float(np.linalg.norm(solver.evaluate(state).numpy())), 0.0)
+    solver.surface_bottom.fill_(-depth)
+    if graph is not None:
+        wp.capture_launch(graph)
+        np.testing.assert_allclose(solver.body_f.numpy()[0], expected, rtol=4e-6, atol=3e-6)
+    _pose(state, position=(0, 0, -0.5), velocity=(0, -0.1, 0))
+    test.assertEqual(float(np.linalg.norm(solver.evaluate(state).numpy())), 0.0)
+
+
 def test_covariance(test, device):
     """Rotate the complete system without changing its physical response."""
     del test
@@ -173,7 +208,8 @@ def test_world_planes(test, device):
     height = np.zeros(model.gravity.shape[0], dtype=np.float32)
     worlds = model.body_world.numpy()
     height[worlds[1]] = 1.0
-    solver = SolverRFT(model, [(0, _plate()), (1, _plate())], surface_height=height)
+    mesh = _plate()
+    solver = SolverRFT(model, [(0, mesh), (1, mesh)], surface_height=height)
     forces = solver.evaluate(state).numpy()
     np.testing.assert_allclose(forces[0], forces[1], rtol=2e-6, atol=1e-5)
     state.body_f.zero_()
@@ -266,6 +302,7 @@ for _device in get_test_devices():
         test_world_planes,
         test_material_capture,
         test_bearing_and_internal_patches,
+        test_finite_layer,
     ):
         add_function_test(TestRFT, _function.__name__, _function, devices=[_device])
 

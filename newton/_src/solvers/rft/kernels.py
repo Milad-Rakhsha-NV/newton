@@ -14,7 +14,29 @@ _CYLINDER = wp.constant(int(GeoType.CYLINDER))
 _ELLIPSOID = wp.constant(int(GeoType.ELLIPSOID))
 
 _Terms = wp.types.vector(length=20, dtype=wp.float32)
-_Polygon = wp.types.matrix(shape=(4, 3), dtype=wp.float32)
+_Polygon = wp.types.matrix(shape=(6, 3), dtype=wp.float32)
+
+
+@wp.func
+def clip_plane(vertices: _Polygon, count: int, up: wp.vec3, height: float, side: float):
+    result = _Polygon()
+    output_count = int(0)
+    for i in range(count):
+        previous = vertices[(i + count - 1) % count]
+        current = vertices[i]
+        previous_depth = side * (height - wp.dot(up, previous))
+        current_depth = side * (height - wp.dot(up, current))
+        previous_inside = previous_depth > 0.0
+        current_inside = current_depth > 0.0
+        if previous_inside != current_inside:
+            t = previous_depth / (previous_depth - current_depth)
+            result[output_count] = previous + t * (current - previous)
+            output_count += 1
+        if current_inside:
+            result[output_count] = current
+            output_count += 1
+    return result, output_count
+
 
 # Factual fit coefficients from arXiv:2205.14920v3, SI Table S3, in its monomial order.
 # https://arxiv.org/src/2205.14920 (anc/SI-Mechanistic_framework_...pdf)
@@ -193,6 +215,7 @@ def integrate_surfaces(
     body_world: wp.array[int],
     gravity: wp.array[wp.vec3],
     surface_height: wp.array[float],
+    surface_bottom: wp.array[float],
     surface_lowering: wp.array[float],
     surface_velocity: wp.vec3,
     material: wp.array2d[float],
@@ -218,7 +241,7 @@ def integrate_surfaces(
     g = gravity[world]
     g_magnitude = wp.length(g)
     wrench = wp.spatial_vector()
-    if g_magnitude > 0.0:
+    if g_magnitude > 0.0 and surface_height[world] - surface_lowering[tid] > surface_bottom[world]:
         down = g / g_magnitude
         up = -down
         height = surface_height[world] - surface_lowering[tid]
@@ -232,24 +255,13 @@ def integrate_surfaces(
         area_twice = wp.length(cross)
         if area_twice > 0.0:
             normal = cross / area_twice
-            vertices = wp.mat33(a[0], a[1], a[2], b[0], b[1], b[2], c[0], c[1], c[2])
-            clipped = _Polygon()
-            count = int(0)
-            # Clip the triangle to the occupied half-space before quadrature.
-            for i in range(3):
-                previous = vertices[(i + 2) % 3]
-                current = vertices[i]
-                previous_depth = height - wp.dot(up, previous)
-                current_depth = height - wp.dot(up, current)
-                previous_inside = previous_depth > 0.0
-                current_inside = current_depth > 0.0
-                if previous_inside != current_inside:
-                    t = previous_depth / (previous_depth - current_depth)
-                    clipped[count] = previous + t * (current - previous)
-                    count += 1
-                if current_inside:
-                    clipped[count] = current
-                    count += 1
+            vertices = _Polygon()
+            vertices[0] = a
+            vertices[1] = b
+            vertices[2] = c
+            clipped, count = clip_plane(vertices, 3, up, height, 1.0)
+            if wp.isfinite(surface_bottom[world]):
+                clipped, count = clip_plane(clipped, count, up, surface_bottom[world], -1.0)
             strength = strength_override
             if strength < 0.0:
                 mu = internal_friction

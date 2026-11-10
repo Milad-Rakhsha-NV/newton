@@ -176,3 +176,23 @@ not resolve shielding between articulated links or interacting granular flows.
 ``body_impulse`` accumulates granular wrenches in float64. Differences divided
 by an elapsed interval yield mean applied forces and torques without aliasing
 substep loads. This diagnostic has no effect on rigid dynamics.
+
+Finite-layer geometry
+---------------------
+
+``surface_bottom`` optionally clips surface quadrature to the region between a
+lower plane and the prescribed free surface. Both planes may be edited per world
+without graph recapture. ``None`` retains the unbounded half-space. A lower plane
+at or above the effective upper plane makes the layer empty, including when a
+body numerically penetrates a separately configured rigid substrate.
+
+The lower clipping plane supplies no rigid reaction. Configure a rigid collider
+with the rigid solver for a thin-layer/substrate experiment. This geometric
+extension does not model bottom confinement or establish accuracy for finite
+sand layers. Its analytic triangle fixture checks force and pressure centroid;
+the companion Isaac Lab zero-thickness test compares articulated trajectories
+against the identical rigid-flat scene.
+
+Repeated references to the same mesh reuse construction-time triangulation.
+Per-surface body and collider ownership remain distinct; meshes remain immutable
+during solver construction and execution.
