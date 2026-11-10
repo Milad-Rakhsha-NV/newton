@@ -133,7 +133,7 @@ From the repository root:
 
 .. code-block:: console
 
-    uv run python -m unittest newton.tests.test_rft
+    uv run python -m unittest newton.tests.rft.test_rft
     uv run python -m scripts.benchmarks.benchmark_rft --device cpu
     uv run python -m scripts.benchmarks.benchmark_rft --device cuda:0
     uv run python -m scripts.benchmarks.benchmark_rft_mpm \
