@@ -32,6 +32,17 @@ if TYPE_CHECKING:
     from .model_view import ModelView
 
 
+@wp.kernel(enable_backward=False)
+def _gather_proxy_body_wrenches(
+    source_ids: wp.array[int],
+    proxy_ids: wp.array[int],
+    feedback: wp.array[wp.spatial_vector],
+    output: wp.array[wp.spatial_vector],
+):
+    i = wp.tid()
+    wp.atomic_add(output, source_ids[i], feedback[proxy_ids[i]])
+
+
 @dataclass
 class _ProxyEntityMapping:
     """Runtime mapping from source entities to destination proxy entities.
@@ -1034,6 +1045,28 @@ class SolverCoupledProxy(SolverCoupled):
         """Return the internally detected contacts for one proxy direction."""
         config = self._proxy_collision_configs.get((source, destination))
         return None if config is None else config.contacts
+
+    def get_proxy_body_wrenches(self, source: str, destination: str) -> wp.array:
+        """Collect current relaxed feedback at original source-body indices.
+
+        Returns an owned world-space COM wrench array [N, N m], indexed by
+        parent-model body id. Values are the latest coupling-pass feedback,
+        including configured relaxation, and feed the next source substep.
+        This diagnostic allocates/launches on the model device; call outside
+        the captured physics step. It never reads released MPM grid scratch.
+        """
+        group = self._proxy_groups.get((source, destination))
+        if group is None:
+            raise KeyError((source, destination))
+        output = wp.zeros(self.model.body_count, dtype=wp.spatial_vector, device=self.model.device)
+        for proxy in group["bodies"]:
+            wp.launch(
+                _gather_proxy_body_wrenches,
+                dim=proxy.src_ids.shape[0],
+                inputs=[proxy.src_ids, proxy.proxy_ids_global, proxy.coupling_forces, output],
+                device=self.model.device,
+            )
+        return output
 
     def get_proxy_collision_state(self) -> dict[tuple[str, str], int]:
         """Return host-side proxy collision cadence state for later restore."""

@@ -560,3 +560,8 @@ See the `DiffSim examples on GitHub`_ for the current reference workflows.
 
 .. |yes| unicode:: U+2705
 .. |no| unicode:: U+274C
+
+.. toctree::
+   :hidden:
+
+   rft

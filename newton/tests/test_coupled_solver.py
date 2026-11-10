@@ -3202,6 +3202,12 @@ class TestSolverCoupledBodyProxyInertia(unittest.TestCase):
 
         src_solver = _BodyForceRecordingSolver.instances[-1]
         expected = np.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
+        # The public diagnostic uses original source ids, not the distinct
+        # proxy id 2, and reports the actual feedback used by the integrator.
+        reported = coupled.get_proxy_body_wrenches("src", "dst").numpy()
+        np.testing.assert_array_equal(reported[0], expected)
+        np.testing.assert_array_equal(reported[1:], 0)
+
         self.assertEqual(src_solver.input_body_f[1].shape[0], 1)
         np.testing.assert_allclose(src_solver.input_body_f[1][0], expected, atol=1.0e-6)
 

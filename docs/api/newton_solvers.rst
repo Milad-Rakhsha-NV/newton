@@ -41,6 +41,7 @@ https://newton-physics.github.io/newton/stable/solvers/index.html.
    SolverImplicitMPM
    SolverKamino
    SolverMuJoCo
+   SolverRFT
    SolverSemiImplicit
    SolverSteel
    SolverStyle3D

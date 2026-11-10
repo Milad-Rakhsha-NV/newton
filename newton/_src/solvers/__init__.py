@@ -10,6 +10,7 @@ if TYPE_CHECKING:
     from .implicit_mpm import SolverImplicitMPM
     from .kamino import SolverKamino
     from .mujoco.solver_mujoco import SolverMuJoCo
+    from .rft import SolverRFT
     from .semi_implicit import SolverSemiImplicit
     from .solver import SolverBase
     from .steel import SolverSteel
@@ -23,6 +24,7 @@ __all__ = [
     "SolverImplicitMPM",
     "SolverKamino",
     "SolverMuJoCo",
+    "SolverRFT",
     "SolverSemiImplicit",
     "SolverSteel",
     "SolverStyle3D",
@@ -42,6 +44,7 @@ _LAZY_IMPORTS: dict[str, tuple[str, str | None]] = {
     "SolverImplicitMPM": (".implicit_mpm", "SolverImplicitMPM"),
     "SolverKamino": (".kamino", "SolverKamino"),
     "SolverMuJoCo": (".mujoco.solver_mujoco", "SolverMuJoCo"),
+    "SolverRFT": (".rft", "SolverRFT"),
     "SolverSemiImplicit": (".semi_implicit", "SolverSemiImplicit"),
     "SolverSteel": (".steel", "SolverSteel"),
     "SolverStyle3D": (".style3d.solver_style3d", "SolverStyle3D"),
