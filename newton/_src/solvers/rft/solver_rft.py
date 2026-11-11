@@ -348,6 +348,18 @@ class SolverRFT(SolverBase):
         finally:
             wp.copy(state_in.body_f, self._external_forces)
 
+    def update_contacts(self, contacts: Contacts, state: State | None = None) -> None:
+        """Export the rigid solver's collision contacts for legacy contact sensors.
+
+        Granular surface loads are separate and remain available through
+        :attr:`body_f` and :attr:`body_impulse`; they are not discrete contacts.
+
+        Args:
+            contacts: Collision contacts receiving rigid contact forces.
+            state: State forwarded to the rigid solver.
+        """
+        self.rigid_solver.update_contacts(contacts, state)
+
     def notify_model_changed(self, flags: ModelFlags | int) -> None:
         """Forward property updates to the rigid integrator; surface topology is immutable.
 
