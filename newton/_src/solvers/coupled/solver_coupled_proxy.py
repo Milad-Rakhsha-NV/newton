@@ -25,7 +25,7 @@ from .proxy_utils import (
     sync_proxy_particles_kernel,
     sync_proxy_states_kernel,
 )
-from .solver_coupled import SolverCoupled
+from .solver_coupled import SolverCoupled, _copy_same_view_state
 
 if TYPE_CHECKING:
     from ...sim import Contacts, Control, Model, State
@@ -368,6 +368,9 @@ class SolverCoupledProxy(SolverCoupled):
             model=model,
             entries=entries,
             coupling=coupling,
+        )
+        self._iteration_input_states = (
+            {name: entry.view.state() for name, entry in self._entries.items()} if coupling.iterations > 1 else {}
         )
 
     @classmethod
@@ -1380,12 +1383,16 @@ class SolverCoupledProxy(SolverCoupled):
         del state_out
         self._reset_aitken_iteration_state()
         iterations = int(self._coupling.iterations)
+        for name, restart_state in self._iteration_input_states.items():
+            _copy_same_view_state(self._entries[name].state_0, restart_state)
         for k in range(iterations):
             # Some solvers use state_in arrays as temporary buffers during a
             # step. Proxy iterations are repeated solves over the same top-level
             # interval, so relaxation restarts copy the original distributed
             # input state and only carry harvested feedback buffers forward.
             if k > 0:
+                for name, restart_state in self._iteration_input_states.items():
+                    _copy_same_view_state(restart_state, self._entries[name].state_0)
                 self._distribute_state(state_in, dt=dt, iteration_restart=True)
             self._step_proxy(state_in, control, contacts, dt, iteration_restart=k > 0)
 

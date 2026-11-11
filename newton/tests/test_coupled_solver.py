@@ -702,6 +702,70 @@ class TestModelView(unittest.TestCase):
 class TestSolverCoupledContactsAndMPM(unittest.TestCase):
     """Test coupled contact preparation and implicit MPM integration."""
 
+    def test_proxy_iterations_restart_mpm_history(self):
+        """Re-solving one interval must preserve the original material history."""
+        builder = newton.ModelBuilder(gravity=(0.0, 0.0, 0.0))
+        SolverImplicitMPM.register_custom_attributes(builder)
+        body = builder.add_body(mass=0.0)
+        builder.add_shape_sphere(body, radius=0.01)
+        for x in (0.10, 0.12):
+            for y in (0.10, 0.12):
+                for z in (0.10, 0.12):
+                    builder.add_particle(pos=(x, y, z), vel=(x, -y, 0.0), mass=0.01, radius=0.01)
+        model = builder.finalize(device="cpu")
+        config = SolverImplicitMPM.Config(
+            grid_type="fixed",
+            voxel_size=0.04,
+            grid_padding=2,
+            max_active_cell_count=512,
+            max_iterations=10,
+            solver="jacobi",
+            transfer_scheme="apic",
+            warmstart_mode="none",
+        )
+        coupled = SolverCoupledProxy(
+            model,
+            entries=(
+                SolverCoupled.Entry(name="rigid", solver=SolverXPBD, bodies=[body]),
+                SolverCoupled.Entry(
+                    name="mpm",
+                    solver=lambda view: SolverImplicitMPM(view, config=config, enable_timers=False),
+                    particles=range(model.particle_count),
+                    in_place=True,
+                ),
+            ),
+            coupling=SolverCoupledProxy.Config(
+                proxies=[
+                    SolverCoupledProxy.Proxy(
+                        source="rigid",
+                        destination="mpm",
+                        bodies=[body],
+                        mode="staggered",
+                        proxy_relaxation=0.0,
+                        collision_pipeline=lambda _: None,
+                    )
+                ],
+                iterations=3,
+            ),
+        )
+        native_step = coupled.solver("mpm").step
+        inputs, outputs = [], []
+
+        def observe_step(state_in, state_out, *args, **kwargs):
+            inputs.append(state_in.mpm.particle_qd_grad.numpy().copy())
+            native_step(state_in, state_out, *args, **kwargs)
+            outputs.append(state_out.particle_qd.numpy().copy())
+
+        state = model.state()
+        with mock.patch.object(coupled.solver("mpm"), "step", side_effect=observe_step):
+            coupled.step(state, state, None, None, 0.001)
+
+        self.assertEqual(len(inputs), 3)
+        self.assertGreater(np.linalg.norm(coupled.entry_state("mpm", "input").mpm.particle_qd_grad.numpy()), 1.0e-6)
+        for history, velocity in zip(inputs[1:], outputs[1:], strict=True):
+            np.testing.assert_array_equal(history, inputs[0])
+            np.testing.assert_allclose(velocity, outputs[0], rtol=1.0e-6, atol=1.0e-7)
+
     def test_graph_capture_setup_stays_solver_specific(self):
         """Verify coupled solvers do not expose a generic graph protocol."""
         for name in ("supports_graph_capture", "prepare_graph_capture", "check_status"):
